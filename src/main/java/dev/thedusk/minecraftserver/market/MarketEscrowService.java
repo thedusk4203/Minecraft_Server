@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.bukkit.Material;
@@ -25,6 +26,7 @@ public final class MarketEscrowService {
     private final PersistenceExecutor executor;
     private final MarketItemCodec codec;
     private final Logger logger;
+    private final Set<UUID> inFlightPreparationTokens = ConcurrentHashMap.newKeySet();
 
     public MarketEscrowService(
             JavaPlugin plugin,
@@ -84,6 +86,7 @@ public final class MarketEscrowService {
         String materialKey = marked.getType().getKey().toString();
         int amount = marked.getAmount();
         player.sendMessage("§7Đang đưa vật phẩm vào escrow...");
+        inFlightPreparationTokens.add(escrowToken);
 
         executor.submit(() -> {
                     var identity = identities.recordSeen(minecraftUuid, playerName);
@@ -100,6 +103,7 @@ public final class MarketEscrowService {
                     ));
                 })
                 .whenComplete((listing, failure) -> {
+                    inFlightPreparationTokens.remove(escrowToken);
                     if (failure != null) {
                         logger.log(Level.WARNING, "Market listing preparation needs reconciliation for " + minecraftUuid, failure);
                         reconcilePreparationFailure(minecraftUuid, escrowToken);
@@ -162,8 +166,14 @@ public final class MarketEscrowService {
         UUID minecraftUuid = player.getUniqueId();
         String playerName = player.getName();
         Set<UUID> inventoryTokens = collectMarkedTokens(player.getInventory());
+        Set<UUID> preparationsAtStart = Set.copyOf(inFlightPreparationTokens);
 
-        executor.submit(() -> buildRecoveryPlan(minecraftUuid, playerName, inventoryTokens))
+        executor.submit(() -> buildRecoveryPlan(
+                        minecraftUuid,
+                        playerName,
+                        inventoryTokens,
+                        preparationsAtStart
+                ))
                 .whenComplete((plan, failure) -> {
                     if (failure != null) {
                         logger.log(Level.WARNING, "Failed to build market recovery plan for " + minecraftUuid, failure);
@@ -340,7 +350,12 @@ public final class MarketEscrowService {
                 }));
     }
 
-    private RecoveryPlan buildRecoveryPlan(UUID minecraftUuid, String playerName, Set<UUID> inventoryTokens) {
+    private RecoveryPlan buildRecoveryPlan(
+            UUID minecraftUuid,
+            String playerName,
+            Set<UUID> inventoryTokens,
+            Set<UUID> preparationsAtStart
+    ) {
         var identity = identities.recordSeen(minecraftUuid, playerName);
         List<MarketListing> open = listings.findOpenBySeller(identity.playerId());
         var byToken = new java.util.HashMap<UUID, MarketListing>();
@@ -352,7 +367,7 @@ public final class MarketEscrowService {
                 listings.findByEscrowToken(token).ifPresent(listing -> byToken.put(token, listing));
             }
         }
-        return new RecoveryPlan(identity.playerId(), open, byToken);
+        return new RecoveryPlan(identity.playerId(), open, byToken, preparationsAtStart);
     }
 
     private void applyRecoveryPlan(UUID minecraftUuid, RecoveryPlan plan) {
@@ -367,7 +382,9 @@ public final class MarketEscrowService {
         for (UUID token : inventoryTokens) {
             MarketListing listing = plan.byToken().get(token);
             if (listing == null) {
-                changed |= stripToken(inventory, token) > 0;
+                if (!plan.deferredPreparationTokens().contains(token)) {
+                    changed |= stripToken(inventory, token) > 0;
+                }
                 continue;
             }
             switch (listing.status()) {
@@ -475,12 +492,14 @@ public final class MarketEscrowService {
     private record RecoveryPlan(
             UUID sellerPlayerId,
             List<MarketListing> openListings,
-            Map<UUID, MarketListing> byToken
+            Map<UUID, MarketListing> byToken,
+            Set<UUID> deferredPreparationTokens
     ) {
         private RecoveryPlan {
             Objects.requireNonNull(sellerPlayerId, "sellerPlayerId");
             openListings = List.copyOf(openListings);
             byToken = Map.copyOf(byToken);
+            deferredPreparationTokens = Set.copyOf(deferredPreparationTokens);
         }
     }
 }
