@@ -11,8 +11,15 @@ commands:
     description: Administrative health and diagnostics command.
     usage: /mcserver <health|diagnostics>
     permission: minecraftserver.admin
+  market:
+    description: Durable player market escrow commands.
+    usage: /market <sell|list|cancel|recover>
+    permission: minecraftserver.market
 
 permissions:
   minecraftserver.admin:
     description: Allows access to MinecraftServerCore administrative commands.
     default: op
+  minecraftserver.market:
+    description: Allows players to use the server market.
+    default: true

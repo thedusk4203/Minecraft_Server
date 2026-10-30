@@ -68,7 +68,7 @@ Scope:
 - first successful claim recorded as a durable milestone
 - onboarding state survives restart/reconnect
 
-Exit gate:
+Exit gate met:
 - A new player receives the first objective without staff intervention.
 - Creating the first non-cancelled GriefPrevention claim records `land_claimed_at` exactly once.
 - Repeated joins/claims are idempotent.
@@ -85,14 +85,6 @@ Scope:
 - deterministic per-player idempotency key
 - reconnect guidance derived from durable onboarding state
 
-Exit gate met:
-- First AuraSkills level-up records the first skill exactly once.
-- Starter currency is paid exactly once through the core economy ledger.
-- Concurrent/replayed level-up handling cannot double-pay or replace first-skill telemetry.
-- A forced ledger conflict rolls back both skill and currency milestones.
-- Restart preserves land, skill, currency and balance state.
-- Full stack loads GriefPrevention and AuraSkills while existing crossplay/core smoke tests remain green.
-
 Receipt:
 - PR #5 merged at `bb28cbf133fc0a4ef203a1147ce9402b440d5249`.
 - Final-head CI `41002439944` succeeded.
@@ -100,44 +92,62 @@ Receipt:
 ### Phase 3C — First trade / market checkpoint
 Status: in progress
 
-The market work is intentionally split because moving Minecraft inventory and PostgreSQL money cannot be made truly atomic by wrapping a synchronous Vault callback around JDBC.
+The market work is split because Bukkit inventory and PostgreSQL do not share a transaction manager. Money settlement is atomic in PostgreSQL; item movement uses a durable recovery state machine.
 
 #### Phase 3C1 — Atomic P2P settlement foundation
-Status: in progress
+Status: complete
 
 Scope:
 - server-owned transfer primitive for one currency between two internal players
 - debit and credit ledger entries committed in one PostgreSQL transaction
-- deterministic lock ordering for both wallet rows
+- deterministic account-creation and row-lock ordering
 - globally idempotent transfer replay
-- explicit transfer-level audit event in addition to immutable balance-change audits
+- transfer-level audit in addition to immutable balance-change audits
 - insufficient-funds and idempotency-conflict paths fail closed
-- no Vault bridge and no inventory mutation in this slice
+
+Receipt:
+- PR #6 merged at `96f756f5e20caaf1151d484110c40e2b1bcfa243`.
+- Final-head CI `41003473192` succeeded.
+
+#### Phase 3C2a — Seller item escrow + listing
+Status: in progress
+
+Scope:
+- PostgreSQL V4 durable listing/escrow state
+- raw-NBT `ItemStack` snapshot with SHA-256 integrity metadata
+- PDC escrow token written to the live item before database preparation
+- crash-ordering: marker persisted before `PREPARED`, inventory removal persisted before `LISTED`
+- escrow-marked items cannot be moved, dropped, used, damaged, mended or lost on death
+- seller cancellation uses `LISTED -> RETURN_PENDING -> CANCELLED`
+- returned item is persisted to playerdata before terminal `CANCELLED`
+- reconnect and `/market recover` reconcile interrupted prepare/activate/cancel flows
+- minimal `/market sell`, `/market list`, `/market cancel`, `/market recover` surface
+- no buyer payment and no `market_used_at` in this slice
 
 Exit gate:
-- Successful settlement debits buyer and credits seller atomically.
-- Retrying the same settlement cannot move money twice.
-- Opposite-direction concurrent settlements complete without a lock-order deadlock.
-- Insufficient funds leaves both balances unchanged.
-- Reusing a settlement key with different semantics fails closed.
-- Existing Phase 2/3A/3B tests and full-stack smoke remain green.
+- Seller can escrow the held stack and obtain a durable `LISTED` listing.
+- `PREPARED` retry by escrow token cannot create a duplicate listing.
+- Wrong-owner cancellation cannot expose or return another seller's item.
+- Crash/reconnect recovery can finish PREPARED activation or RETURN_PENDING cancellation without duplicating or losing the item.
+- Listing snapshot and state survive database restart.
+- Full stack loads V4 and `/market` command wiring while existing gameplay/crossplay smoke remains green.
 
-#### Phase 3C2 — Durable listing / item escrow + first trade
+#### Phase 3C2b — Purchase settlement + buyer delivery + first trade
 Status: planned
 
 Scope direction:
-- durable listing/order state in PostgreSQL
-- explicit crash-safe item handoff/claim state instead of pretending inventory and database are one transaction
-- settlement uses the Phase 3C1 transfer primitive
+- reserve an active listing for one buyer
+- settle payment through the Phase 3C1 atomic transfer primitive
+- durable paid/delivery-pending state
+- retry-safe buyer item delivery with explicit acknowledgement
 - first completed market action records `market_used_at` exactly once
-- reconnect/retry can recover an interrupted delivery without duplicating money or items
-- minimal Java/Bedrock-friendly interaction surface
+- onboarding advances only after delivery reaches terminal success
 
 Exit gate:
-- A player with onboarding currency can complete one buy/sell/trade action without staff intervention.
-- Payment is duplication-safe and item delivery is retry/restart-safe.
-- Onboarding records `market_used_at` exactly once.
-- A crash/retry cannot duplicate the purchased item or charge twice.
+- A player with onboarding currency can buy one listing without staff intervention.
+- Payment is charged exactly once and seller is credited exactly once.
+- Crash/retry cannot duplicate the purchased item or charge twice.
+- `market_used_at` is written only after completed delivery.
 
 ## Phase 4 — PvE content
 Deliverables:
@@ -215,14 +225,17 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Finish Phase 3C1 and prove the settlement primitive in CI before adding item/listing state.
+Finish Phase 3C2a and prove seller escrow recovery before implementing buyer settlement.
 
 Acceptance checklist:
-- transfer contract rejects self-transfer, zero/negative amounts and oversized idempotency keys;
-- both wallet rows are locked in deterministic order;
-- debit + credit + audits commit or roll back together;
-- transfer replay returns the original ledger transaction IDs and does not move money twice;
-- insufficient funds and idempotency conflicts fail closed;
-- concurrent opposite-direction transfers pass under PostgreSQL 18;
-- all existing economy/onboarding integration tests remain green;
-- full Docker stack remains green.
+- V4 migrates on PostgreSQL 18;
+- PREPARED creation is idempotent by escrow token;
+- item snapshot stores raw NBT bytes plus integrity hash;
+- escrow marker is durable before PREPARED becomes durable;
+- inventory removal is durable before LISTED becomes durable;
+- return delivery is durable before CANCELLED becomes durable;
+- marked items are protected from player mutation/drop/death loss;
+- wrong-owner cancellation fails closed;
+- repository state transitions and restart persistence are covered by integration tests;
+- `/market` is registered in the full Paper stack;
+- all existing economy/onboarding/crossplay tests remain green.

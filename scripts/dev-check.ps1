@@ -26,5 +26,13 @@ if ($plugins -notmatch "AuraSkills") {
 }
 
 Write-Host ""
+Write-Host "== Market command wiring =="
+$market = docker compose exec -T paper rcon-cli "market list"
+$market | Write-Host
+if ($market -notmatch "requires an online player") {
+    throw "Market command is not wired to MinecraftServerCore."
+}
+
+Write-Host ""
 Write-Host "== Recent proxy/plugin logs =="
 docker compose logs --tail=80 velocity | Select-String -Pattern "Velocity|Geyser|Floodgate|ERROR|WARN"

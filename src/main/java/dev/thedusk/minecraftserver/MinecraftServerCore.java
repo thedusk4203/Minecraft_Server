@@ -5,6 +5,12 @@ import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
+import dev.thedusk.minecraftserver.market.MarketCommandHandler;
+import dev.thedusk.minecraftserver.market.MarketEscrowGuardListener;
+import dev.thedusk.minecraftserver.market.MarketEscrowService;
+import dev.thedusk.minecraftserver.market.MarketItemCodec;
+import dev.thedusk.minecraftserver.market.MarketListingRepository;
+import dev.thedusk.minecraftserver.market.MarketRecoveryListener;
 import dev.thedusk.minecraftserver.onboarding.AuraSkillsOnboardingListener;
 import dev.thedusk.minecraftserver.onboarding.FirstSkillCurrencyService;
 import dev.thedusk.minecraftserver.onboarding.LandClaimOnboardingListener;
@@ -24,6 +30,7 @@ public final class MinecraftServerCore extends JavaPlugin {
     private PlayerIdentityRepository identities;
     private OnboardingProgressRepository onboarding;
     private EconomyLedger economy;
+    private MarketEscrowService market;
 
     @Override
     public void onEnable() {
@@ -41,6 +48,17 @@ public final class MinecraftServerCore extends JavaPlugin {
                     economy
             );
             AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
+
+            MarketListingRepository marketListings = new MarketListingRepository(database, auditLog);
+            MarketItemCodec marketItemCodec = new MarketItemCodec(this);
+            market = new MarketEscrowService(
+                    this,
+                    identities,
+                    marketListings,
+                    persistenceExecutor,
+                    marketItemCodec,
+                    getLogger()
+            );
 
             getServer().getPluginManager().registerEvents(
                     new PlayerBootstrapListener(
@@ -72,12 +90,22 @@ public final class MinecraftServerCore extends JavaPlugin {
                     ),
                     this
             );
+            getServer().getPluginManager().registerEvents(
+                    new MarketEscrowGuardListener(marketItemCodec),
+                    this
+            );
+            getServer().getPluginManager().registerEvents(
+                    new MarketRecoveryListener(this, market),
+                    this
+            );
+
             configureAdminCommand(diagnostics);
+            configureMarketCommand();
 
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
-                            + " with PostgreSQL persistence, onboarding, land protection and AuraSkills progression"
+                            + " with PostgreSQL persistence, onboarding, land protection, AuraSkills and market escrow"
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -100,6 +128,14 @@ public final class MinecraftServerCore extends JavaPlugin {
         ));
     }
 
+    private void configureMarketCommand() {
+        PluginCommand command = Objects.requireNonNull(
+                getCommand("market"),
+                "market command must be declared in plugin.yml"
+        );
+        command.setExecutor(new MarketCommandHandler(Objects.requireNonNull(market, "market")));
+    }
+
     @Override
     public void onDisable() {
         closeResources();
@@ -107,6 +143,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     }
 
     private void closeResources() {
+        market = null;
+
         PersistenceExecutor activeExecutor = persistenceExecutor;
         persistenceExecutor = null;
         if (activeExecutor != null) {
