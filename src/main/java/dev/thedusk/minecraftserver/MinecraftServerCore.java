@@ -10,6 +10,8 @@ import dev.thedusk.minecraftserver.market.MarketEscrowGuardListener;
 import dev.thedusk.minecraftserver.market.MarketEscrowService;
 import dev.thedusk.minecraftserver.market.MarketItemCodec;
 import dev.thedusk.minecraftserver.market.MarketListingRepository;
+import dev.thedusk.minecraftserver.market.MarketPurchaseRepository;
+import dev.thedusk.minecraftserver.market.MarketPurchaseService;
 import dev.thedusk.minecraftserver.market.MarketRecoveryListener;
 import dev.thedusk.minecraftserver.onboarding.AuraSkillsOnboardingListener;
 import dev.thedusk.minecraftserver.onboarding.FirstSkillCurrencyService;
@@ -30,7 +32,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     private PlayerIdentityRepository identities;
     private OnboardingProgressRepository onboarding;
     private EconomyLedger economy;
-    private MarketEscrowService market;
+    private MarketEscrowService marketEscrow;
+    private MarketPurchaseService marketPurchases;
 
     @Override
     public void onEnable() {
@@ -51,9 +54,24 @@ public final class MinecraftServerCore extends JavaPlugin {
 
             MarketListingRepository marketListings = new MarketListingRepository(database, auditLog);
             MarketItemCodec marketItemCodec = new MarketItemCodec(this);
-            market = new MarketEscrowService(
+            marketEscrow = new MarketEscrowService(
                     this,
                     identities,
+                    marketListings,
+                    persistenceExecutor,
+                    marketItemCodec,
+                    getLogger()
+            );
+            MarketPurchaseRepository marketPurchaseRepository = new MarketPurchaseRepository(
+                    database,
+                    auditLog,
+                    economy,
+                    onboarding
+            );
+            marketPurchases = new MarketPurchaseService(
+                    this,
+                    identities,
+                    marketPurchaseRepository,
                     marketListings,
                     persistenceExecutor,
                     marketItemCodec,
@@ -95,7 +113,7 @@ public final class MinecraftServerCore extends JavaPlugin {
                     this
             );
             getServer().getPluginManager().registerEvents(
-                    new MarketRecoveryListener(this, market),
+                    new MarketRecoveryListener(this, marketEscrow, marketPurchases),
                     this
             );
 
@@ -105,7 +123,7 @@ public final class MinecraftServerCore extends JavaPlugin {
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
-                            + " with PostgreSQL persistence, onboarding, land protection, AuraSkills and market escrow"
+                            + " with PostgreSQL persistence, onboarding, land protection, AuraSkills and durable market"
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -133,7 +151,10 @@ public final class MinecraftServerCore extends JavaPlugin {
                 getCommand("market"),
                 "market command must be declared in plugin.yml"
         );
-        command.setExecutor(new MarketCommandHandler(Objects.requireNonNull(market, "market")));
+        command.setExecutor(new MarketCommandHandler(
+                Objects.requireNonNull(marketEscrow, "marketEscrow"),
+                Objects.requireNonNull(marketPurchases, "marketPurchases")
+        ));
     }
 
     @Override
@@ -143,7 +164,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     }
 
     private void closeResources() {
-        market = null;
+        marketPurchases = null;
+        marketEscrow = null;
 
         PersistenceExecutor activeExecutor = persistenceExecutor;
         persistenceExecutor = null;
