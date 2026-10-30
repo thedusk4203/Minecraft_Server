@@ -202,12 +202,18 @@ public final class StoneWardenItemRewardRepository {
                 StoneWardenItemReward prepared = requireLocked(connection, rewardId);
                 connection.commit();
                 return prepared;
-            } catch (SQLException | RuntimeException exception) {
+            } catch (EncounterRewardException exception) {
+                rollbackQuietly(connection);
+                throw exception;
+            } catch (SQLException exception) {
+                rollbackQuietly(connection);
+                throw storageFailure("Failed to prepare Stone Warden item reward snapshot", exception);
+            } catch (RuntimeException exception) {
                 rollbackQuietly(connection);
                 throw exception;
             }
         } catch (SQLException exception) {
-            throw storageFailure("Failed to prepare Stone Warden item reward snapshot", exception);
+            throw storageFailure("Failed to acquire item reward database connection", exception);
         }
     }
 
@@ -247,12 +253,18 @@ public final class StoneWardenItemRewardRepository {
                 StoneWardenItemReward delivered = requireLocked(connection, rewardId);
                 connection.commit();
                 return delivered;
-            } catch (SQLException | RuntimeException exception) {
+            } catch (EncounterRewardException exception) {
+                rollbackQuietly(connection);
+                throw exception;
+            } catch (SQLException exception) {
+                rollbackQuietly(connection);
+                throw storageFailure("Failed to acknowledge Stone Warden item reward delivery", exception);
+            } catch (RuntimeException exception) {
                 rollbackQuietly(connection);
                 throw exception;
             }
         } catch (SQLException exception) {
-            throw storageFailure("Failed to acknowledge Stone Warden item reward delivery", exception);
+            throw storageFailure("Failed to acquire item reward database connection", exception);
         }
     }
 
@@ -280,12 +292,18 @@ public final class StoneWardenItemRewardRepository {
                 }
                 connection.commit();
                 return inserted;
-            } catch (SQLException | RuntimeException exception) {
+            } catch (EncounterRewardException exception) {
+                rollbackQuietly(connection);
+                throw exception;
+            } catch (SQLException exception) {
+                rollbackQuietly(connection);
+                throw storageFailure("Failed to prepare eligible Stone Warden item rewards", exception);
+            } catch (RuntimeException exception) {
                 rollbackQuietly(connection);
                 throw exception;
             }
         } catch (SQLException exception) {
-            throw storageFailure("Failed to prepare eligible Stone Warden item rewards", exception);
+            throw storageFailure("Failed to acquire item reward database connection", exception);
         }
     }
 
