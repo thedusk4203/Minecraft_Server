@@ -95,7 +95,7 @@ public final class MinecraftServerCore extends JavaPlugin {
                     this
             );
             getServer().getPluginManager().registerEvents(
-                    new MarketRecoveryListener(market),
+                    new MarketRecoveryListener(this, market),
                     this
             );
 
