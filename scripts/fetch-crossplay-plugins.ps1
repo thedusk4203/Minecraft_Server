@@ -12,8 +12,10 @@ $floodgateVersion = "2.2.5"
 $floodgateSourceVersion = "2.2.5-SNAPSHOT"
 $floodgateBuild = 141
 $floodgateCommit = "81b65ccb766bf8024858ebf3eefa6974056aecc5"
-$floodgateSourceUrl = "https://github.com/GeyserMC/Floodgate/archive/$floodgateCommit.zip"
+$floodgateRepoUrl = "https://github.com/GeyserMC/Floodgate.git"
 $floodgateGradleImage = "gradle:7.6-jdk17"
+$floodgateRecipe = "git-recursive-full-build-v1"
+$floodgateExpectedDescriptorVersion = "2.2.5-SNAPSHOT (b141-81b65cc)"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
@@ -39,6 +41,58 @@ function Invoke-WithRetry {
     }
     throw "$Description failed after 5 attempts: $($lastError.Exception.Message)"
 }
+
+function Assert-Command([string] $Name) {
+    if ($null -eq (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "Required command not found: $Name"
+    }
+}
+
+function Assert-VelocityDescriptor {
+    param(
+        [Parameter(Mandatory = $true)][string] $JarPath,
+        [Parameter(Mandatory = $true)][string] $ExpectedId,
+        [Parameter(Mandatory = $true)][string] $ExpectedMain,
+        [string] $ExpectedVersion = ""
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($JarPath)
+    try {
+        $descriptorEntry = $zip.GetEntry("velocity-plugin.json")
+        if ($null -eq $descriptorEntry) {
+            throw "velocity-plugin.json is missing from $JarPath"
+        }
+        $reader = New-Object System.IO.StreamReader($descriptorEntry.Open())
+        try {
+            $descriptor = ($reader.ReadToEnd() | ConvertFrom-Json)
+        }
+        finally {
+            $reader.Dispose()
+        }
+
+        if ([string]$descriptor.id -ne $ExpectedId) {
+            throw "Velocity plugin id mismatch: expected $ExpectedId, got $($descriptor.id)"
+        }
+        if ([string]$descriptor.main -ne $ExpectedMain) {
+            throw "Velocity plugin main mismatch: expected $ExpectedMain, got $($descriptor.main)"
+        }
+        if ($ExpectedVersion -and ([string]$descriptor.version -ne $ExpectedVersion)) {
+            throw "Velocity plugin version mismatch: expected $ExpectedVersion, got $($descriptor.version)"
+        }
+        $mainEntry = $ExpectedMain.Replace('.', '/') + ".class"
+        if ($null -eq $zip.GetEntry($mainEntry)) {
+            throw "Velocity plugin main class is missing: $mainEntry"
+        }
+        Write-Host "Validated Velocity descriptor id=$($descriptor.id) version=$($descriptor.version) main=$($descriptor.main)"
+    }
+    finally {
+        $zip.Dispose()
+    }
+}
+
+Assert-Command "docker"
+Assert-Command "git"
 
 function Get-GeyserVelocity {
     $outputFile = Join-Path $outputDir "Geyser-Velocity.jar"
@@ -73,6 +127,7 @@ function Get-GeyserVelocity {
     if (Test-Path $outputFile) {
         $existingSha = (Get-FileHash -Path $outputFile -Algorithm SHA512).Hash.ToLowerInvariant()
         if ($existingSha -eq $geyserExpectedSha512) {
+            Assert-VelocityDescriptor -JarPath $outputFile -ExpectedId "geyser" -ExpectedMain "org.geysermc.geyser.platform.velocity.GeyserVelocityPlugin"
             Write-Host "Geyser-Velocity.jar already matches pinned SHA-512."
             return
         }
@@ -87,6 +142,7 @@ function Get-GeyserVelocity {
         if ($actualSha -ne $geyserExpectedSha512) {
             throw "Geyser SHA-512 mismatch; expected $geyserExpectedSha512, got $actualSha"
         }
+        Assert-VelocityDescriptor -JarPath $tempFile -ExpectedId "geyser" -ExpectedMain "org.geysermc.geyser.platform.velocity.GeyserVelocityPlugin"
         Move-Item -Force -Path $tempFile -Destination $outputFile
         Write-Host "Verified Geyser $geyserVersion sha512=$geyserExpectedSha512"
     }
@@ -106,28 +162,38 @@ function Build-FloodgateVelocity {
         $provenance = Get-Content -Path $provenanceFile
         if (($provenance -contains "commit=$floodgateCommit") -and
             ($provenance -contains "build=$floodgateBuild") -and
+            ($provenance -contains "recipe=$floodgateRecipe") -and
             ($provenance -contains "sha256=$cachedSha")) {
+            Assert-VelocityDescriptor -JarPath $outputFile -ExpectedId "floodgate" -ExpectedMain "org.geysermc.floodgate.VelocityPlugin" -ExpectedVersion $floodgateExpectedDescriptorVersion
             Write-Host "floodgate-velocity.jar already matches pinned source provenance."
             return
         }
     }
 
-    $sourceZip = Join-Path $outputDir ".floodgate-source-$([Guid]::NewGuid().ToString('N')).zip"
-    $extractRoot = Join-Path $outputDir ".floodgate-build-$([Guid]::NewGuid().ToString('N'))"
-    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+    $workRoot = Join-Path $outputDir ".floodgate-build-$([Guid]::NewGuid().ToString('N'))"
+    $sourcePath = Join-Path $workRoot "Floodgate"
+    New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
 
     try {
-        Write-Host "Downloading Floodgate $floodgateVersion build $floodgateBuild source at $floodgateCommit from GitHub..."
-        Invoke-WithRetry -Description "Download Floodgate source" -Operation {
-            Invoke-WebRequest -UseBasicParsing -Uri $floodgateSourceUrl -OutFile $sourceZip | Out-Null
-        } | Out-Null
-        Expand-Archive -Path $sourceZip -DestinationPath $extractRoot -Force
+        Write-Host "Checking out Floodgate $floodgateVersion build $floodgateBuild at $floodgateCommit with recursive submodules..."
+        & git clone --quiet --filter=blob:none --no-checkout $floodgateRepoUrl $sourcePath
+        if ($LASTEXITCODE -ne 0) { throw "Floodgate git clone failed with exit code $LASTEXITCODE" }
+        & git -C $sourcePath checkout --quiet --detach $floodgateCommit
+        if ($LASTEXITCODE -ne 0) { throw "Floodgate git checkout failed with exit code $LASTEXITCODE" }
+        & git -C $sourcePath submodule update --init --recursive --depth 1
+        if ($LASTEXITCODE -ne 0) { throw "Floodgate submodule checkout failed with exit code $LASTEXITCODE" }
 
-        $sourceDir = Get-ChildItem -Path $extractRoot -Directory | Select-Object -First 1
-        if ($null -eq $sourceDir) {
-            throw "Floodgate source archive did not contain a source directory"
+        $checkedCommit = (& git -C $sourcePath rev-parse HEAD).Trim()
+        if ($checkedCommit -ne $floodgateCommit) {
+            throw "Floodgate checkout mismatch; expected $floodgateCommit, got $checkedCommit"
         }
-        $sourcePath = $sourceDir.FullName
+        $submoduleStatus = @(& git -C $sourcePath submodule status --recursive)
+        foreach ($line in $submoduleStatus) {
+            if ($line -match '^[+-]') {
+                throw "Floodgate submodule checkout is not pinned cleanly: $line"
+            }
+        }
+
         $gradleProperties = Join-Path $sourcePath "gradle.properties"
         $versionLine = Get-Content -Path $gradleProperties | Where-Object { $_ -like "version=*" } | Select-Object -First 1
         $sourceVersion = $versionLine.Substring("version=".Length)
@@ -135,14 +201,14 @@ function Build-FloodgateVelocity {
             throw "Floodgate source version mismatch; expected $floodgateSourceVersion, got $sourceVersion"
         }
 
-        Write-Host "Building official Floodgate commit with BUILD_NUMBER=$floodgateBuild..."
+        Write-Host "Reproducing upstream Floodgate build workflow with BUILD_NUMBER=$floodgateBuild..."
         & docker run --rm `
             -e "BUILD_NUMBER=$floodgateBuild" `
             -e "GRADLE_USER_HOME=/tmp/gradle-home" `
             -v "${sourcePath}:/workspace" `
             -w /workspace `
             $floodgateGradleImage `
-            gradle :velocity:build --no-daemon
+            ./gradlew build --no-daemon
         if ($LASTEXITCODE -ne 0) {
             throw "Floodgate Gradle build failed with exit code $LASTEXITCODE"
         }
@@ -151,24 +217,27 @@ function Build-FloodgateVelocity {
         if (-not (Test-Path $builtJar)) {
             throw "Floodgate build did not produce velocity/build/libs/floodgate-velocity.jar"
         }
+        Assert-VelocityDescriptor -JarPath $builtJar -ExpectedId "floodgate" -ExpectedMain "org.geysermc.floodgate.VelocityPlugin" -ExpectedVersion $floodgateExpectedDescriptorVersion
         Copy-Item -Force -Path $builtJar -Destination $outputFile
         $builtSha = (Get-FileHash -Path $outputFile -Algorithm SHA256).Hash.ToLowerInvariant()
-        @(
-            "source=https://github.com/GeyserMC/Floodgate",
+        $provenanceLines = @(
+            "source=$floodgateRepoUrl",
             "commit=$floodgateCommit",
             "source_version=$floodgateSourceVersion",
             "runtime_version=$floodgateVersion",
             "build=$floodgateBuild",
-            "sha256=$builtSha"
-        ) | Set-Content -Path $provenanceFile -Encoding Ascii
-        Write-Host "Built Floodgate $floodgateVersion build $floodgateBuild from commit $floodgateCommit sha256=$builtSha"
+            "recipe=$floodgateRecipe"
+        )
+        foreach ($line in $submoduleStatus) {
+            if ($line) { $provenanceLines += "submodule=$line" }
+        }
+        $provenanceLines += "sha256=$builtSha"
+        $provenanceLines | Set-Content -Path $provenanceFile -Encoding Ascii
+        Write-Host "Built Floodgate $floodgateVersion build $floodgateBuild from exact Git checkout sha256=$builtSha"
     }
     finally {
-        if (Test-Path $sourceZip) {
-            Remove-Item -Force $sourceZip
-        }
-        if (Test-Path $extractRoot) {
-            Remove-Item -Recurse -Force $extractRoot
+        if (Test-Path $workRoot) {
+            Remove-Item -Recurse -Force $workRoot
         }
     }
 }
