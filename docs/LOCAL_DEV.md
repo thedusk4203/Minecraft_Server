@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Only Docker Desktop (or Docker Engine + Compose) is required for the normal local workflow. Java and Gradle are run in containers.
+Only Docker Desktop (or Docker Engine + Compose) is required for the normal local workflow. Java and Gradle are run in containers. The startup scripts use the host HTTPS client to fetch the pinned Geyser/Floodgate artifacts before Compose starts.
 
 ## Start on Windows
 
@@ -10,15 +10,15 @@ Only Docker Desktop (or Docker Engine + Compose) is required for the normal loca
 .\scripts\dev-up.ps1
 ```
 
-On first run, the script creates a git-ignored `.env` containing random local-only PostgreSQL, RCON and Velocity-forwarding credentials. It then builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
+On first run, the script creates a git-ignored `.env` containing random local-only PostgreSQL, RCON and Velocity-forwarding credentials. It verifies the pinned crossplay artifacts, builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
 
 - PostgreSQL
 - Paper 26.3 backend
 - GriefPrevention 16.18.7 on Paper
 - AuraSkills 2.4.0 on Paper
 - Velocity 4.3.1 proxy
-- Geyser-Velocity
-- Floodgate-Velocity
+- Geyser-Velocity 2.12.1 build 1277
+- Floodgate-Velocity 2.2.5 build 141
 
 Endpoints:
 
@@ -100,6 +100,22 @@ bash scripts/dev-up.sh
 
 The Unix startup script follows the same model and creates `.env` with mode `600` when it does not already exist.
 
+## Manual crossplay artifact preparation
+
+The normal startup scripts do this automatically. If you invoke `docker compose` directly, prepare the two pinned proxy plugins first:
+
+```powershell
+.\scripts\fetch-crossplay-plugins.ps1
+```
+
+or:
+
+```bash
+bash scripts/fetch-crossplay-plugins.sh
+```
+
+The fetchers request exact Geyser/Floodgate version+build metadata from the official GeyserMC downloads API, require those identifiers to match the repository pins, download the corresponding exact-build Velocity JAR, and verify the SHA-256 published in that metadata. Verified JARs live under the git-ignored `build/crossplay-plugins/` directory and are bind-mounted into Velocity. Compose no longer asks the Velocity container's Java helper to resolve `latest` plugin URLs at startup.
+
 ## Security boundary
 
 No reusable runtime credential is committed to the repository. `compose.yaml` requires three environment values (`FORWARDING_SECRET`, `POSTGRES_PASSWORD`, and `RCON_PASSWORD`); the local startup scripts generate them into the git-ignored `.env`. CI supplies disposable values only for its isolated smoke-test runner.
@@ -112,6 +128,6 @@ Velocity performs Mojang authentication. The Paper backend therefore has `online
 
 ## Crossplay
 
-Geyser and Floodgate are installed on Velocity from their official download API on container startup. Geyser runs at the proxy layer; it is intentionally not installed on the Paper backend.
+Geyser and Floodgate run on Velocity and are intentionally not installed on the Paper backend. Their artifacts are pinned and verified before proxy startup rather than resolved as mutable `latest` downloads inside the proxy container.
 
 Land protection, skill progression and the market command flow are server-side, so Java and Bedrock clients share the same authoritative rules without a required client mod.
