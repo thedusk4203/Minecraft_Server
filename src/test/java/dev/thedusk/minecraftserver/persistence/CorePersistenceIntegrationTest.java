@@ -48,18 +48,7 @@ class CorePersistenceIntegrationTest {
 
     @BeforeAll
     static void openDatabase() {
-        database = DatabaseManager.open(new DatabaseSettings(
-                POSTGRES.getHost(),
-                POSTGRES.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT),
-                POSTGRES.getDatabaseName(),
-                POSTGRES.getUsername(),
-                POSTGRES.getPassword(),
-                4
-        ));
-        identities = new PlayerIdentityRepository(database);
-        AuditLog auditLog = new AuditLog();
-        economy = new EconomyLedger(database, auditLog);
-        diagnostics = new AdminDiagnosticsService(database, auditLog);
+        openServices();
     }
 
     @AfterAll
@@ -87,6 +76,29 @@ class CorePersistenceIntegrationTest {
         assertEquals(first.playerId(), second.playerId());
         assertEquals(minecraftUuid, second.minecraftUuid());
         assertEquals("Alice2", second.lastKnownName());
+    }
+
+    @Test
+    void restartPreservesIdentityAndEconomyState() {
+        UUID minecraftUuid = UUID.randomUUID();
+        PlayerIdentity beforeRestart = identities.recordSeen(minecraftUuid, "RestartUser");
+        economy.apply(new EconomyMutation(
+                beforeRestart.playerId(),
+                "COINS",
+                300L,
+                "test.restart-credit",
+                "test-restart-credit-once",
+                UUID.randomUUID(),
+                "{}"
+        ));
+
+        database.close();
+        openServices();
+
+        PlayerIdentity afterRestart = identities.findByMinecraftUuid(minecraftUuid).orElseThrow();
+        assertEquals(beforeRestart.playerId(), afterRestart.playerId());
+        assertEquals(300L, economy.balance(afterRestart.playerId(), "COINS"));
+        assertEquals(1L, countRowsUnchecked("economy_transaction"));
     }
 
     @Test
@@ -248,6 +260,25 @@ class CorePersistenceIntegrationTest {
         assertAdminAudit(player.playerId(), correlationId, "diagnostics");
     }
 
+    private static void openServices() {
+        database = DatabaseManager.open(databaseSettings());
+        identities = new PlayerIdentityRepository(database);
+        AuditLog auditLog = new AuditLog();
+        economy = new EconomyLedger(database, auditLog);
+        diagnostics = new AdminDiagnosticsService(database, auditLog);
+    }
+
+    private static DatabaseSettings databaseSettings() {
+        return new DatabaseSettings(
+                POSTGRES.getHost(),
+                POSTGRES.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT),
+                POSTGRES.getDatabaseName(),
+                POSTGRES.getUsername(),
+                POSTGRES.getPassword(),
+                4
+        );
+    }
+
     private static List<EconomyResult> applyConcurrently(EconomyMutation... mutations) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(mutations.length);
         CountDownLatch ready = new CountDownLatch(mutations.length);
@@ -307,6 +338,14 @@ class CorePersistenceIntegrationTest {
              var result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
             result.next();
             return result.getLong(1);
+        }
+    }
+
+    private static long countRowsUnchecked(String table) {
+        try {
+            return countRows(table);
+        } catch (SQLException exception) {
+            throw new AssertionError("Failed to count rows in " + table, exception);
         }
     }
 }
