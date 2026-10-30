@@ -7,6 +7,10 @@ public record AdminDiagnosticsSnapshot(
         long auditEvents,
         long encounterRuns,
         long activeEncounterRuns,
+        long encounterRewards,
+        long pendingEncounterRewards,
+        long encounterRewardItems,
+        long pendingEncounterRewardItems,
         int activeConnections,
         int idleConnections
 ) {
