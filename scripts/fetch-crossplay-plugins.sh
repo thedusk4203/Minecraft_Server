@@ -21,7 +21,19 @@ require_command() {
 
 require_command curl
 require_command python3
-require_command sha256sum
+
+if command -v sha256sum >/dev/null 2>&1; then
+  hash_file() {
+    sha256sum "$1" | awk '{print $1}'
+  }
+elif command -v shasum >/dev/null 2>&1; then
+  hash_file() {
+    shasum -a 256 "$1" | awk '{print $1}'
+  }
+else
+  echo "Required SHA-256 tool not found: install sha256sum or shasum" >&2
+  exit 1
+fi
 
 fetch_plugin() (
   local project="$1"
@@ -81,7 +93,7 @@ PY
   local output_file="$OUTPUT_DIR/$output_name"
   if [[ -f "$output_file" ]]; then
     local existing_sha
-    existing_sha="$(sha256sum "$output_file" | awk '{print $1}')"
+    existing_sha="$(hash_file "$output_file")"
     if [[ "$existing_sha" == "$expected_sha" ]]; then
       echo "$output_name already matches pinned $project $version build $build ($expected_sha)."
       exit 0
@@ -93,10 +105,12 @@ PY
     --retry 4 --retry-all-errors --connect-timeout 20 \
     "$download_url" -o "$temp_file"
 
-  echo "$expected_sha  $temp_file" | sha256sum --check --status || {
-    echo "SHA-256 mismatch for $project $version build $build" >&2
+  local actual_sha
+  actual_sha="$(hash_file "$temp_file")"
+  if [[ "$actual_sha" != "$expected_sha" ]]; then
+    echo "SHA-256 mismatch for $project $version build $build; expected $expected_sha, got $actual_sha" >&2
     exit 1
-  }
+  fi
 
   mv -f "$temp_file" "$output_file"
   echo "Verified $output_name sha256=$expected_sha"
