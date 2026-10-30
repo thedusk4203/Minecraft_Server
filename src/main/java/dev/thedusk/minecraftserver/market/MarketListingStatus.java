@@ -4,5 +4,7 @@ public enum MarketListingStatus {
     PREPARED,
     LISTED,
     RETURN_PENDING,
-    CANCELLED
+    CANCELLED,
+    DELIVERY_PENDING,
+    COMPLETED
 }
