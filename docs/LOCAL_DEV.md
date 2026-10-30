@@ -116,7 +116,7 @@ bash scripts/fetch-crossplay-plugins.sh
 
 The Geyser path queries the official Modrinth API for the exact `2.12.1-b1277` Velocity/26.3 release, requires the primary file to be `Geyser-Velocity.jar`, requires its published SHA-512 to equal the repository pin, then verifies the downloaded Modrinth CDN artifact against that SHA-512.
 
-Floodgate does not rely on the downloads host. The fetcher downloads the official GeyserMC/Floodgate source archive for exact commit `81b65ccb766bf8024858ebf3eefa6974056aecc5` (`Update to 26.3`), verifies the source declares version `2.2.5`, and builds the Velocity artifact in pinned `gradle:7.6-jdk17` with `BUILD_NUMBER=141`. The resulting JAR is cached with a local provenance record containing source commit, version, build number and its SHA-256.
+Floodgate does not rely on the downloads host. The fetcher downloads the official GeyserMC/Floodgate source archive for exact commit `81b65ccb766bf8024858ebf3eefa6974056aecc5` (`Update to 26.3`), verifies the source declares `2.2.5-SNAPSHOT`, and builds the Velocity artifact in pinned `gradle:7.6-jdk17` with `BUILD_NUMBER=141`. The resulting runtime identifies as Floodgate `2.2.5` build 141 and is cached with a local provenance record containing source commit, source/runtime version, build number and its SHA-256.
 
 Prepared artifacts live under the git-ignored `build/crossplay-plugins/` directory and are bind-mounted into Velocity. Compose never asks the proxy container to resolve mutable `latest` plugin URLs at startup.
 
