@@ -19,6 +19,7 @@ public record MarketListingDraft(
         UUID correlationId
 ) {
     private static final Pattern SHA256_PATTERN = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern MATERIAL_KEY_PATTERN = Pattern.compile("[a-z0-9._-]+:[a-z0-9/._-]+");
 
     public MarketListingDraft {
         Objects.requireNonNull(sellerPlayerId, "sellerPlayerId");
@@ -39,6 +40,9 @@ public record MarketListingDraft(
             throw new IllegalArgumentException("itemSha256 must be 64 lowercase hex characters");
         }
         materialKey = require(materialKey, "materialKey", 128).toLowerCase(Locale.ROOT);
+        if (!MATERIAL_KEY_PATTERN.matcher(materialKey).matches()) {
+            throw new IllegalArgumentException("materialKey must be a lowercase namespaced key");
+        }
         if (itemAmount <= 0) {
             throw new IllegalArgumentException("itemAmount must be positive");
         }
