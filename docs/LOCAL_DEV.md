@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Only Docker Desktop (or Docker Engine + Compose) is required for the normal local workflow. Java and Gradle are run in containers.
+Only Docker Desktop (or Docker Engine + Compose) is required for the normal local workflow. Java and Gradle are run in containers. The startup scripts prepare pinned Geyser/Floodgate artifacts before Compose starts.
 
 ## Start on Windows
 
@@ -10,15 +10,15 @@ Only Docker Desktop (or Docker Engine + Compose) is required for the normal loca
 .\scripts\dev-up.ps1
 ```
 
-On first run, the script creates a git-ignored `.env` containing random local-only PostgreSQL, RCON and Velocity-forwarding credentials. It then builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
+On first run, the script creates a git-ignored `.env` containing random local-only PostgreSQL, RCON and Velocity-forwarding credentials. It verifies/builds the pinned crossplay artifacts, builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
 
 - PostgreSQL
 - Paper 26.3 backend
 - GriefPrevention 16.18.7 on Paper
 - AuraSkills 2.4.0 on Paper
 - Velocity 4.3.1 proxy
-- Geyser-Velocity
-- Floodgate-Velocity
+- Geyser-Velocity 2.12.1-b1277
+- Floodgate-Velocity 2.2.5 build 141
 
 Endpoints:
 
@@ -100,9 +100,31 @@ bash scripts/dev-up.sh
 
 The Unix startup script follows the same model and creates `.env` with mode `600` when it does not already exist.
 
+## Manual crossplay artifact preparation
+
+The normal startup scripts do this automatically. If you invoke `docker compose` directly, prepare the two pinned proxy plugins first:
+
+```powershell
+.\scripts\fetch-crossplay-plugins.ps1
+```
+
+or:
+
+```bash
+bash scripts/fetch-crossplay-plugins.sh
+```
+
+The Geyser path queries the official Modrinth API for the exact `2.12.1-b1277` Velocity/26.3 release, requires the primary file to be `Geyser-Velocity.jar`, requires its published SHA-512 to equal the repository pin, then verifies the downloaded Modrinth CDN artifact against that SHA-512.
+
+Floodgate does not rely on the downloads host. The fetcher downloads the official GeyserMC/Floodgate source archive for exact commit `81b65ccb766bf8024858ebf3eefa6974056aecc5` (`Update to 26.3`), verifies the source declares `2.2.5-SNAPSHOT`, and builds the Velocity artifact in pinned `gradle:7.6-jdk17` with `BUILD_NUMBER=141`. The resulting runtime identifies as Floodgate `2.2.5` build 141 and is cached with a local provenance record containing source commit, source/runtime version, build number and its SHA-256.
+
+Prepared artifacts live under the git-ignored `build/crossplay-plugins/` directory and are bind-mounted into Velocity. Compose never asks the proxy container to resolve mutable `latest` plugin URLs at startup.
+
 ## Security boundary
 
 No reusable runtime credential is committed to the repository. `compose.yaml` requires three environment values (`FORWARDING_SECRET`, `POSTGRES_PASSWORD`, and `RCON_PASSWORD`); the local startup scripts generate them into the git-ignored `.env`. CI supplies disposable values only for its isolated smoke-test runner.
+
+Crossplay artifact acquisition never disables TLS verification. Geyser is hash-pinned to official Modrinth metadata; Floodgate is built from an immutable official GitHub commit. Updating either artifact requires an explicit repository pin change and the full regression gate.
 
 Staging and production must use independently generated secrets from the deployment environment/secret store. The backend Paper port must remain inaccessible from the public internet; only Velocity is an ingress point.
 
@@ -112,6 +134,6 @@ Velocity performs Mojang authentication. The Paper backend therefore has `online
 
 ## Crossplay
 
-Geyser and Floodgate are installed on Velocity from their official download API on container startup. Geyser runs at the proxy layer; it is intentionally not installed on the Paper backend.
+Geyser and Floodgate run on Velocity and are intentionally not installed on the Paper backend. Their artifacts are pinned and prepared before proxy startup rather than resolved as mutable `latest` downloads inside the proxy container.
 
 Land protection, skill progression and the market command flow are server-side, so Java and Bedrock clients share the same authoritative rules without a required client mod.
