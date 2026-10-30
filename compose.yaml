@@ -1,0 +1,65 @@
+name: minecraft-server-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: minecraft
+      POSTGRES_USER: minecraft
+      POSTGRES_PASSWORD: minecraft-dev-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minecraft -d minecraft"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  paper:
+    image: itzg/minecraft-server:java25
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: "26.3"
+      ONLINE_MODE: "FALSE"
+      MEMORY: "3G"
+      MOTD: "Minecraft Server Dev Backend"
+      ENABLE_RCON: "TRUE"
+      RCON_PASSWORD: "minecraft-dev-only"
+      PAPER_VELOCITY_SECRET: "minecraft-dev-forwarding-secret-change-me"
+      PLUGINS: "/plugins"
+    expose:
+      - "25565"
+    volumes:
+      - paper-data:/data
+      - ./build/libs:/plugins:ro
+      - ./config/paper:/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  velocity:
+    image: itzg/mc-proxy:java25
+    environment:
+      TYPE: VELOCITY
+      VELOCITY_VERSION: "4.3.1"
+      MINECRAFT_VERSION: "26.3"
+      MEMORY: "512m"
+      PLUGINS: |
+        https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
+        https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
+    ports:
+      - "25565:25565/tcp"
+      - "19132:19132/tcp"
+      - "19132:19132/udp"
+    volumes:
+      - velocity-data:/server
+      - ./config/velocity:/config:ro
+    depends_on:
+      paper:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  paper-data:
+  velocity-data:
