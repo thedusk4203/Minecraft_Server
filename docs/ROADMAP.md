@@ -75,7 +75,7 @@ Exit gate:
 - Restart preserves the onboarding milestone.
 
 ### Phase 3B — First skill level + starter currency
-Status: in progress
+Status: complete
 
 Scope:
 - AuraSkills 2.4.0 pinned for Paper/Minecraft 26.3
@@ -85,27 +85,59 @@ Scope:
 - deterministic per-player idempotency key
 - reconnect guidance derived from durable onboarding state
 
-Exit gate:
+Exit gate met:
 - First AuraSkills level-up records the first skill exactly once.
 - Starter currency is paid exactly once through the core economy ledger.
 - Concurrent/replayed level-up handling cannot double-pay or replace first-skill telemetry.
 - A forced ledger conflict rolls back both skill and currency milestones.
 - Restart preserves land, skill, currency and balance state.
-- Full stack loads both GriefPrevention and AuraSkills while existing crossplay/core smoke tests remain green.
+- Full stack loads GriefPrevention and AuraSkills while existing crossplay/core smoke tests remain green.
+
+Receipt:
+- PR #5 merged at `bb28cbf133fc0a4ef203a1147ce9402b440d5249`.
+- Final-head CI `41002439944` succeeded.
 
 ### Phase 3C — First trade / market checkpoint
+Status: in progress
+
+The market work is intentionally split because moving Minecraft inventory and PostgreSQL money cannot be made truly atomic by wrapping a synchronous Vault callback around JDBC.
+
+#### Phase 3C1 — Atomic P2P settlement foundation
+Status: in progress
+
+Scope:
+- server-owned transfer primitive for one currency between two internal players
+- debit and credit ledger entries committed in one PostgreSQL transaction
+- deterministic lock ordering for both wallet rows
+- globally idempotent transfer replay
+- explicit transfer-level audit event in addition to immutable balance-change audits
+- insufficient-funds and idempotency-conflict paths fail closed
+- no Vault bridge and no inventory mutation in this slice
+
+Exit gate:
+- Successful settlement debits buyer and credits seller atomically.
+- Retrying the same settlement cannot move money twice.
+- Opposite-direction concurrent settlements complete without a lock-order deadlock.
+- Insufficient funds leaves both balances unchanged.
+- Reusing a settlement key with different semantics fails closed.
+- Existing Phase 2/3A/3B tests and full-stack smoke remain green.
+
+#### Phase 3C2 — Durable listing / item escrow + first trade
 Status: planned
 
 Scope direction:
-- server-owned async listing/escrow workflow unless an external dependency proves compatible with the PostgreSQL/idempotency/threading contract
-- first successful buy/sell/trade records `market_used_at`
-- trade settlement uses compensating/auditable ledger operations rather than direct balance edits
-- starter objective advances without staff intervention
+- durable listing/order state in PostgreSQL
+- explicit crash-safe item handoff/claim state instead of pretending inventory and database are one transaction
+- settlement uses the Phase 3C1 transfer primitive
+- first completed market action records `market_used_at` exactly once
+- reconnect/retry can recover an interrupted delivery without duplicating money or items
+- minimal Java/Bedrock-friendly interaction surface
 
 Exit gate:
-- A player with onboarding currency can complete one market/trade action.
-- Settlement is duplication-safe and survives retry/restart.
+- A player with onboarding currency can complete one buy/sell/trade action without staff intervention.
+- Payment is duplication-safe and item delivery is retry/restart-safe.
 - Onboarding records `market_used_at` exactly once.
+- A crash/retry cannot duplicate the purchased item or charge twice.
 
 ## Phase 4 — PvE content
 Deliverables:
@@ -183,14 +215,14 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Finish Phase 3B: first skill level and starter currency.
+Finish Phase 3C1 and prove the settlement primitive in CI before adding item/listing state.
 
 Acceptance checklist:
-- `V3__first_skill_progress.sql` migrates on PostgreSQL 18.
-- AuraSkills 2.4.0 API compiles and the plugin loads in the Paper stack.
-- `SkillLevelUpEvent` persistence runs outside the Minecraft main thread.
-- First skill ID/level is immutable through replay.
-- The 100 COINS onboarding grant is globally idempotent per player.
-- Ledger + first-currency milestone are one database transaction.
-- Conflict rollback and restart persistence are covered by integration tests.
-- Full-stack CI remains green.
+- transfer contract rejects self-transfer, zero/negative amounts and oversized idempotency keys;
+- both wallet rows are locked in deterministic order;
+- debit + credit + audits commit or roll back together;
+- transfer replay returns the original ledger transaction IDs and does not move money twice;
+- insufficient funds and idempotency conflicts fail closed;
+- concurrent opposite-direction transfers pass under PostgreSQL 18;
+- all existing economy/onboarding integration tests remain green;
+- full Docker stack remains green.
