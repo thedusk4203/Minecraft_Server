@@ -11,6 +11,9 @@ import dev.thedusk.minecraftserver.identity.PlayerIdentity;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -219,17 +222,26 @@ class MarketListingRepositoryIntegrationTest {
             long price,
             UUID correlationId
     ) {
+        byte[] payload = {10, 20, 30, 40};
         return new MarketListingDraft(
                 sellerPlayerId,
                 token,
-                new byte[]{10, 20, 30, 40},
-                "b".repeat(64),
+                payload,
+                sha256(payload),
                 "minecraft:diamond",
                 3,
                 "COINS",
                 price,
                 correlationId
         );
+    }
+
+    private static String sha256(byte[] payload) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AssertionError(exception);
+        }
     }
 
     private static long countRows(String table) throws Exception {
