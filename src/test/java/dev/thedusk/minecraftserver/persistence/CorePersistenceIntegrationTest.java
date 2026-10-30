@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
+import dev.thedusk.minecraftserver.admin.AdminDiagnosticsSnapshot;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyException;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
@@ -42,6 +44,7 @@ class CorePersistenceIntegrationTest {
     private static DatabaseManager database;
     private static PlayerIdentityRepository identities;
     private static EconomyLedger economy;
+    private static AdminDiagnosticsService diagnostics;
 
     @BeforeAll
     static void openDatabase() {
@@ -54,7 +57,9 @@ class CorePersistenceIntegrationTest {
                 4
         ));
         identities = new PlayerIdentityRepository(database);
-        economy = new EconomyLedger(database, new AuditLog());
+        AuditLog auditLog = new AuditLog();
+        economy = new EconomyLedger(database, auditLog);
+        diagnostics = new AdminDiagnosticsService(database, auditLog);
     }
 
     @AfterAll
@@ -219,6 +224,30 @@ class CorePersistenceIntegrationTest {
         assertEquals(100L, economy.balance(player.playerId(), "COINS"));
     }
 
+    @Test
+    void adminDiagnosticsReportsDurableStateAndAuditsActor() throws SQLException {
+        UUID minecraftUuid = UUID.randomUUID();
+        PlayerIdentity player = identities.recordSeen(minecraftUuid, "AdminUser");
+        economy.apply(new EconomyMutation(
+                player.playerId(),
+                "COINS",
+                250L,
+                "test.admin-seed",
+                "test-admin-seed-once",
+                UUID.randomUUID(),
+                "{}"
+        ));
+        UUID correlationId = UUID.randomUUID();
+
+        AdminDiagnosticsSnapshot snapshot = diagnostics.collect(minecraftUuid, correlationId);
+
+        assertEquals(1L, snapshot.knownPlayers());
+        assertEquals(1L, snapshot.economyAccounts());
+        assertEquals(1L, snapshot.economyTransactions());
+        assertEquals(2L, snapshot.auditEvents());
+        assertAdminAudit(player.playerId(), correlationId, "diagnostics");
+    }
+
     private static List<EconomyResult> applyConcurrently(EconomyMutation... mutations) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(mutations.length);
         CountDownLatch ready = new CountDownLatch(mutations.length);
@@ -247,6 +276,28 @@ class CorePersistenceIntegrationTest {
         } finally {
             start.countDown();
             executor.shutdownNow();
+        }
+    }
+
+    private static void assertAdminAudit(
+            UUID expectedActorPlayerId,
+            UUID expectedCorrelationId,
+            String expectedSubcommand
+    ) throws SQLException {
+        try (var connection = database.connection();
+             var statement = connection.prepareStatement("""
+                     SELECT actor_player_id, correlation_id, payload ->> 'subcommand' AS subcommand
+                     FROM audit_event
+                     WHERE event_type = 'admin.command'
+                     ORDER BY occurred_at DESC
+                     LIMIT 1
+                     """)) {
+            try (var result = statement.executeQuery()) {
+                assertTrue(result.next(), "Expected an admin.command audit event");
+                assertEquals(expectedActorPlayerId, result.getObject("actor_player_id", UUID.class));
+                assertEquals(expectedCorrelationId, result.getObject("correlation_id", UUID.class));
+                assertEquals(expectedSubcommand, result.getString("subcommand"));
+            }
         }
     }
 
