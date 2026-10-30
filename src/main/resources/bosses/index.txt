@@ -1,0 +1,2 @@
+# Phase 4B flagship boss definitions.
+stone_warden.properties
