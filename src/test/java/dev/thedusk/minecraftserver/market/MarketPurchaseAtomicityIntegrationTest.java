@@ -87,8 +87,8 @@ class MarketPurchaseAtomicityIntegrationTest {
 
     @Test
     void completionAuditConflictRollsBackTerminalStateAndOnboardingMilestones() throws Exception {
-        PlayerIdentity seller = player("CompleteAtomicSeller");
-        PlayerIdentity buyer = player("CompleteAtomicBuyer");
+        PlayerIdentity seller = player("CompleteSeller2");
+        PlayerIdentity buyer = player("CompleteBuyer2");
         MarketListing listed = listed(seller, 60L);
         credit(buyer, 100L, "atomic-complete-seed");
         MarketPurchaseResult paid = purchases.purchase(
