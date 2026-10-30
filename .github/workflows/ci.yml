@@ -11,6 +11,10 @@ jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      FORWARDING_SECRET: ci-forwarding-secret-ephemeral-only
+      POSTGRES_PASSWORD: ci-postgres-password-ephemeral-only
+      RCON_PASSWORD: ci-rcon-password-ephemeral-only
 
     steps:
       - name: Checkout
