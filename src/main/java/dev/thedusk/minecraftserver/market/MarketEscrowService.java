@@ -46,6 +46,10 @@ public final class MarketEscrowService {
 
     public void sell(Player player, long priceAmount) {
         Objects.requireNonNull(player, "player");
+        if (player.isDead()) {
+            player.sendMessage("§eHãy respawn trước khi tạo listing.");
+            return;
+        }
         if (priceAmount <= 0) {
             player.sendMessage("§cGiá bán phải lớn hơn 0 COINS.");
             return;
@@ -163,6 +167,9 @@ public final class MarketEscrowService {
 
     public void recover(Player player) {
         Objects.requireNonNull(player, "player");
+        if (player.isDead()) {
+            return;
+        }
         UUID minecraftUuid = player.getUniqueId();
         String playerName = player.getName();
         Set<UUID> inventoryTokens = collectMarkedTokens(player.getInventory());
@@ -199,7 +206,7 @@ public final class MarketEscrowService {
                     } else {
                         scheduleMain(() -> {
                             Player player = plugin.getServer().getPlayer(minecraftUuid);
-                            if (player != null && player.isOnline()) {
+                            if (player != null && player.isOnline() && !player.isDead()) {
                                 if (stripToken(player.getInventory(), escrowToken) > 0) {
                                     bestEffortSave(player, "unlock failed market preparation");
                                 }
@@ -212,7 +219,7 @@ public final class MarketEscrowService {
 
     private void finalizePreparedEscrow(UUID minecraftUuid, MarketListing listing) {
         Player player = plugin.getServer().getPlayer(minecraftUuid);
-        if (player == null || !player.isOnline()) {
+        if (player == null || !player.isOnline() || player.isDead()) {
             return;
         }
         if (listing.status() == MarketListingStatus.LISTED) {
@@ -283,7 +290,7 @@ public final class MarketEscrowService {
 
     private void deliverReturn(UUID minecraftUuid, MarketListing listing) {
         Player player = plugin.getServer().getPlayer(minecraftUuid);
-        if (player == null || !player.isOnline()) {
+        if (player == null || !player.isOnline() || player.isDead()) {
             return;
         }
         if (listing.status() == MarketListingStatus.CANCELLED) {
@@ -341,7 +348,7 @@ public final class MarketEscrowService {
                         }
                         return;
                     }
-                    if (current != null && current.isOnline()) {
+                    if (current != null && current.isOnline() && !current.isDead()) {
                         if (stripToken(current.getInventory(), cancelled.escrowToken()) > 0) {
                             bestEffortSave(current, "persist stripped marker after cancellation acknowledgement");
                         }
@@ -372,7 +379,7 @@ public final class MarketEscrowService {
 
     private void applyRecoveryPlan(UUID minecraftUuid, RecoveryPlan plan) {
         Player player = plugin.getServer().getPlayer(minecraftUuid);
-        if (player == null || !player.isOnline()) {
+        if (player == null || !player.isOnline() || player.isDead()) {
             return;
         }
         PlayerInventory inventory = player.getInventory();
