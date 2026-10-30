@@ -52,6 +52,13 @@ jobs:
       - name: Check Paper core plugin
         run: docker compose exec -T paper rcon-cli "mcserver health"
 
+      - name: Check crossplay proxy plugins
+        run: |
+          docker compose exec -T velocity sh -ec '
+            test -f plugins/Geyser-Velocity/config.yml
+            test -f plugins/floodgate/config.yml
+          '
+
       - name: Show stack status
         if: always()
         run: docker compose ps
