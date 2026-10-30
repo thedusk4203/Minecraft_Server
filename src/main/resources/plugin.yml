@@ -16,8 +16,8 @@ commands:
     usage: /market <sell|list|cancel|recover>
     permission: minecraftserver.market
   boss:
-    description: Start or inspect the Stone Warden encounter.
-    usage: /boss <start [player...]|status>
+    description: Start, inspect or recover the Stone Warden encounter and rewards.
+    usage: /boss <start [player...]|status|recover>
     permission: minecraftserver.boss
 
 permissions:
@@ -28,5 +28,5 @@ permissions:
     description: Allows players to use the server market.
     default: true
   minecraftserver.boss:
-    description: Allows players to start and inspect the first PvE boss encounter.
+    description: Allows players to start, inspect and recover the first PvE boss encounter.
     default: true
