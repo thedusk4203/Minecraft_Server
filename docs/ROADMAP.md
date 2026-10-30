@@ -209,46 +209,69 @@ Receipt:
 - Freeze receipt: `docs/PHASE4A_FREEZE.md`.
 
 ### Phase 4B — First Boss Combat Vertical Slice
+Status: complete / frozen
+
+Scope:
+- one data-driven `stone_warden` boss definition consuming the frozen 4A runtime
+- server-owned spawn/despawn and encounter-zone lifecycle
+- participant eligibility bound to one durable encounter run
+- player-readable Seismic Slam and Stone Charge telegraphs
+- low-health enrage behavior
+- horizontal and vertical anti-cheese boundaries
+- death, disconnect, timeout, wipe/failure and spawn-failure behavior
+- clean reset/despawn behavior
+- telemetry for attempt start, mechanics and terminal outcome
+- repeatable solo and two-client real-network-client E2E verification
+
+Exit gate met:
+- a real client can join the isolated Paper 26.3 verification stack through pinned ViaProxy translation;
+- `/boss start` as a normal player creates one durable run before boss spawn;
+- Stone Warden is visible to the client and remains bound to that run;
+- the client remains connected through the mechanic window;
+- Seismic Slam and Stone Charge telemetry are observed;
+- only bound, arena-valid participant damage is accepted;
+- client-originated melee damage completes the boss encounter;
+- a two-client party can join, converge through normal client movement and start one Stone Warden run;
+- both clients remain bound through mechanics and exactly two durable `encounter_participant` rows are persisted;
+- latest durable solo and party runs reach `COMPLETED` through the same encounter lifecycle;
+- restart, cleanup and terminalization continue to rely on the frozen Phase 4A durable authority;
+- no reward/item/economy mutation exists in Phase 4B;
+- existing Phase 1–4A integration/full-stack/market/crossplay regression gates remain green.
+
+Receipts:
+- PR #13 implementation merged at `014bf43779e12456c8f211d760d696411f097397`.
+- Implementation final-head CI `41025886647` succeeded.
+- PR #14 solo real-client verification merged at `781a7252c57829d5e2da7daeee8bf0ea6cef7f4e`.
+- Solo verification exact head `adcc25866bd498506b7bf6afbf77111454fad5fc`.
+- Solo verification CI `41028891703` succeeded.
+- PR #15 two-client party verification merged at `9bd8eb5c0d345388ca0f12c4408ab544fe10ec58`.
+- Party verification exact head `c4cc1ee718f9b14e08c1c8ce551af14b21bd1186`.
+- Party verification CI `41031029381` succeeded.
+- Freeze receipt: `docs/PHASE4B_FREEZE.md`.
+
+### Phase 4C — Boss Reward Delivery
 Status: next
 
 Scope:
-- one data-driven boss definition consuming the frozen 4A runtime
-- server-owned spawn/despawn and encounter-zone lifecycle
-- participant eligibility bound to one durable encounter run
-- clear player-readable telegraphs
-- at least two mechanics beyond basic melee
-- explicit anti-cheese boundaries
-- death, disconnect, timeout and wipe/failure behavior
-- clean reset/despawn behavior
-- telemetry for attempts, participant deaths, duration and terminal outcome
-
-Non-goals for 4B:
-- durable loot/economy reward delivery
-- first dungeon layout/content
-- matchmaking or party-system expansion
-- advanced boss authoring GUI
-- broad content catalog
+- deterministic reward eligibility derived only from a completed durable boss run;
+- durable reward intent/history per eligible participant;
+- deterministic reward identity so retries cannot create a second grant;
+- auditable currency reward delivery through the existing economy ledger;
+- retry-safe item reward delivery with explicit playerdata/DB ordering and recovery markers;
+- restart/reconnect/manual recovery for interrupted delivery;
+- reward telemetry and admin diagnostics;
+- failure-injection tests around every transaction boundary;
+- no dungeon expansion until reward delivery is proven.
 
 Exit gate:
-- a small party can start the first boss from a validated definition and the world entity lifecycle is bound to exactly one durable encounter run;
-- boss completion, wipe/failure, timeout and participant-loss paths converge on an explicit terminal run outcome;
-- server restart cannot leave a boss entity treated as a live resumable run;
-- at least two mechanics have readable telegraphs and deterministic state-machine boundaries;
-- arena/zone rules block obvious trivial cheese without relying on staff intervention;
-- repeated cleanup/despawn is safe and does not produce conflicting terminal outcomes;
-- attempt/death/duration/outcome telemetry is observable;
-- no reward is granted yet, so combat correctness can be reviewed independently from anti-duplication reward delivery;
-- existing Phase 1–4A integration and full-stack smoke tests remain green.
-
-### Phase 4C — Boss Reward Delivery
-Status: planned
-
-Scope direction:
-- deterministic reward eligibility derived from a completed boss run;
-- durable reward intent/history;
-- retry-safe item/currency delivery with explicit anti-duplication boundaries;
-- reward telemetry and audit;
-- no dungeon expansion until reward delivery is proven.
+- one completed Stone Warden run produces exactly one reward intent per eligible participant;
+- repeated finalization/recovery cannot mint a second currency or item reward;
+- an incomplete/failed/abandoned encounter cannot produce a reward;
+- currency reward ledger mutation and durable reward state remain transactionally consistent;
+- item reward delivery survives disconnect/restart without intentionally duplicating or losing the reward;
+- concurrent/replayed reward delivery serializes safely;
+- reward audit and telemetry identify run, participant, reward definition/version and terminal delivery state;
+- real-client boss E2E can continue through reward completion without regressing combat or existing Phase 1–4B gates.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -315,17 +338,19 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Implement **Phase 4B — First Boss Combat Vertical Slice** as a separate reviewable change-set consuming the frozen 4A encounter runtime.
+Implement **Phase 4C — Boss Reward Delivery** as a separate reviewable change-set consuming the frozen Phase 4A/4B encounter and Stone Warden combat contracts.
 
 Acceptance checklist:
-- add exactly one validated boss definition rather than a generic boss catalog;
-- bridge boss spawn/despawn to one durable `encounter_run` identity;
-- define explicit boss runtime states and permitted transitions;
-- define arena/encounter-zone entry, boundary and cleanup rules;
-- implement clear telegraphs and at least two mechanics beyond basic melee;
-- define participant death, disconnect, wipe and timeout semantics;
-- make terminalization idempotent under duplicate cleanup/events;
-- record attempt/death/duration/outcome telemetry without inventing reward state;
-- add deterministic unit/integration tests for state-machine and cleanup boundaries where Paper APIs permit;
-- add full-stack smoke proving the boss runtime loads without regressing Phase 1–4A systems;
-- do not implement loot/currency rewards until Phase 4C.
+- derive eligibility only from a durable `COMPLETED` Stone Warden run and its canonical participant set;
+- define one deterministic reward definition/version for the first Stone Warden reward rather than a generic loot catalog;
+- persist one durable reward intent per `(encounter_run, participant, reward_definition)`;
+- make creation/replay semantics idempotent and semantic conflicts fail closed;
+- route currency grants through the existing PostgreSQL economy ledger in the same transaction as reward-state advancement;
+- model item delivery as a recovery-safe state machine instead of assuming Bukkit inventory + PostgreSQL are atomic;
+- use a stable marker/identity for any item delivery so reconnect/restart can distinguish an existing undelivered reward from a duplicate mint;
+- persist playerdata before acknowledging terminal item delivery state;
+- add reconnect/respawn/manual/admin recovery paths;
+- add concurrency, restart and failure-injection integration tests;
+- extend diagnostics/audit/telemetry with reward delivery state;
+- extend the real-client Stone Warden E2E gate through reward completion;
+- do not add dungeon content until this reward gate is frozen.
