@@ -23,6 +23,15 @@ public final class EconomyLedger {
             FOR UPDATE
             """;
 
+    private static final String LOCK_TRANSFER_ACCOUNTS_SQL = """
+            SELECT account_id, player_id, balance
+            FROM economy_account
+            WHERE currency_code = ?
+              AND player_id IN (?, ?)
+            ORDER BY player_id
+            FOR UPDATE
+            """;
+
     private static final String FIND_TRANSACTION_SQL = """
             SELECT transaction_id, account_id, delta, balance_after, reason, correlation_id
             FROM economy_transaction
@@ -91,66 +100,157 @@ public final class EconomyLedger {
         Objects.requireNonNull(mutation, "mutation");
 
         try {
-            if (connection.getAutoCommit()) {
-                throw new IllegalArgumentException(
-                        "applyInTransaction requires a caller-owned transaction with autoCommit=false"
-                );
-            }
-
-            Account account = lockOrCreateAccount(connection, mutation);
+            requireCallerOwnedTransaction(connection, "applyInTransaction");
+            ensureAccount(connection, mutation.playerId(), mutation.currencyCode());
+            Account account = lockAccount(connection, mutation.playerId(), mutation.currencyCode());
             EconomyResult existing = findExisting(connection, mutation, account.accountId());
             if (existing != null) {
                 return existing;
             }
 
-            long newBalance;
+            long newBalance = checkedBalanceAfter(account.balance(), mutation.delta(), mutation.currencyCode());
+            return recordMutation(connection, account, mutation, newBalance);
+        } catch (SQLException exception) {
+            throw translateSqlFailure("Failed to apply economy mutation", exception);
+        }
+    }
+
+    public EconomyTransferResult transfer(EconomyTransfer transfer) {
+        Objects.requireNonNull(transfer, "transfer");
+
+        try (Connection connection = database.connection()) {
+            connection.setAutoCommit(false);
             try {
-                newBalance = Math.addExact(account.balance(), mutation.delta());
-            } catch (ArithmeticException exception) {
-                throw new EconomyException(
-                        EconomyException.Code.INVALID_MUTATION,
-                        "Economy balance overflow",
-                        exception
-                );
+                EconomyTransferResult result = transferInTransaction(connection, transfer);
+                connection.commit();
+                return result;
+            } catch (EconomyException exception) {
+                rollbackQuietly(connection);
+                throw exception;
+            } catch (SQLException exception) {
+                rollbackQuietly(connection);
+                throw storageFailure("Failed to commit economy transfer", exception);
+            } catch (RuntimeException exception) {
+                rollbackQuietly(connection);
+                throw exception;
             }
+        } catch (SQLException exception) {
+            throw storageFailure("Failed to acquire economy database connection", exception);
+        }
+    }
 
-            if (newBalance < 0) {
-                throw new EconomyException(
-                        EconomyException.Code.INSUFFICIENT_FUNDS,
-                        "Insufficient funds for " + mutation.currencyCode()
-                );
-            }
+    /**
+     * Transfers currency between two player accounts in a transaction owned by the caller. Both account rows
+     * are locked in deterministic player UUID order so opposite-direction transfers cannot create a lock-order
+     * cycle. The debit, credit and audit entries are committed or rolled back together by the caller.
+     */
+    public EconomyTransferResult transferInTransaction(Connection connection, EconomyTransfer transfer) {
+        Objects.requireNonNull(connection, "connection");
+        Objects.requireNonNull(transfer, "transfer");
 
-            UUID transactionId = UUID.randomUUID();
-            updateAccount(connection, account.accountId(), newBalance);
-            insertTransaction(connection, transactionId, account.accountId(), mutation, newBalance);
-            auditLog.append(
-                    connection,
-                    mutation.playerId(),
-                    "economy.balance_changed",
-                    mutation.correlationId(),
-                    "economy:" + mutation.idempotencyKey(),
-                    auditPayload(transactionId, mutation, newBalance)
+        try {
+            requireCallerOwnedTransaction(connection, "transferInTransaction");
+            ensureAccount(connection, transfer.fromPlayerId(), transfer.currencyCode());
+            ensureAccount(connection, transfer.toPlayerId(), transfer.currencyCode());
+            TransferAccounts accounts = lockTransferAccounts(connection, transfer);
+
+            EconomyMutation debit = new EconomyMutation(
+                    transfer.fromPlayerId(),
+                    transfer.currencyCode(),
+                    -transfer.amount(),
+                    transfer.reason(),
+                    transfer.debitIdempotencyKey(),
+                    transfer.correlationId(),
+                    transfer.metadataJson()
+            );
+            EconomyMutation credit = new EconomyMutation(
+                    transfer.toPlayerId(),
+                    transfer.currencyCode(),
+                    transfer.amount(),
+                    transfer.reason(),
+                    transfer.creditIdempotencyKey(),
+                    transfer.correlationId(),
+                    transfer.metadataJson()
             );
 
-            return new EconomyResult(
-                    transactionId,
-                    account.accountId(),
-                    mutation.delta(),
-                    newBalance,
-                    mutation.reason(),
-                    mutation.correlationId(),
+            EconomyResult existingDebit = findExisting(
+                    connection,
+                    debit,
+                    accounts.from().accountId()
+            );
+            EconomyResult existingCredit = findExisting(
+                    connection,
+                    credit,
+                    accounts.to().accountId()
+            );
+            if (existingDebit != null || existingCredit != null) {
+                if (existingDebit == null || existingCredit == null
+                        || !existingDebit.correlationId().equals(existingCredit.correlationId())) {
+                    throw new EconomyException(
+                            EconomyException.Code.IDEMPOTENCY_CONFLICT,
+                            "Economy transfer idempotency key resolved to an incomplete or inconsistent transfer"
+                    );
+                }
+                return new EconomyTransferResult(
+                        existingDebit.transactionId(),
+                        existingCredit.transactionId(),
+                        transfer.fromPlayerId(),
+                        transfer.toPlayerId(),
+                        transfer.currencyCode(),
+                        transfer.amount(),
+                        existingDebit.balanceAfter(),
+                        existingCredit.balanceAfter(),
+                        existingDebit.correlationId(),
+                        true
+                );
+            }
+
+            long fromBalanceAfter = checkedBalanceAfter(
+                    accounts.from().balance(),
+                    -transfer.amount(),
+                    transfer.currencyCode()
+            );
+            long toBalanceAfter = checkedBalanceAfter(
+                    accounts.to().balance(),
+                    transfer.amount(),
+                    transfer.currencyCode()
+            );
+
+            EconomyResult debitResult = recordMutation(
+                    connection,
+                    accounts.from(),
+                    debit,
+                    fromBalanceAfter
+            );
+            EconomyResult creditResult = recordMutation(
+                    connection,
+                    accounts.to(),
+                    credit,
+                    toBalanceAfter
+            );
+            auditLog.append(
+                    connection,
+                    transfer.fromPlayerId(),
+                    "economy.transfer",
+                    transfer.correlationId(),
+                    "transfer:" + transfer.idempotencyKey(),
+                    transferAuditPayload(transfer, debitResult, creditResult)
+            );
+
+            return new EconomyTransferResult(
+                    debitResult.transactionId(),
+                    creditResult.transactionId(),
+                    transfer.fromPlayerId(),
+                    transfer.toPlayerId(),
+                    transfer.currencyCode(),
+                    transfer.amount(),
+                    debitResult.balanceAfter(),
+                    creditResult.balanceAfter(),
+                    transfer.correlationId(),
                     false
             );
         } catch (SQLException exception) {
-            if ("23505".equals(exception.getSQLState())) {
-                throw new EconomyException(
-                        EconomyException.Code.IDEMPOTENCY_CONFLICT,
-                        "Economy idempotency key already belongs to another mutation",
-                        exception
-                );
-            }
-            throw storageFailure("Failed to apply economy mutation", exception);
+            throw translateSqlFailure("Failed to apply economy transfer", exception);
         }
     }
 
@@ -170,27 +270,60 @@ public final class EconomyLedger {
         }
     }
 
-    private Account lockOrCreateAccount(Connection connection, EconomyMutation mutation) throws SQLException {
+    private void ensureAccount(Connection connection, UUID playerId, String currencyCode) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(CREATE_ACCOUNT_SQL)) {
             statement.setObject(1, UUID.randomUUID());
-            statement.setObject(2, mutation.playerId());
-            statement.setString(3, mutation.currencyCode());
+            statement.setObject(2, playerId);
+            statement.setString(3, currencyCode);
             statement.executeUpdate();
         }
+    }
 
+    private Account lockAccount(Connection connection, UUID playerId, String currencyCode) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(LOCK_ACCOUNT_SQL)) {
-            statement.setObject(1, mutation.playerId());
-            statement.setString(2, mutation.currencyCode());
+            statement.setObject(1, playerId);
+            statement.setString(2, currencyCode);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) {
                     throw new SQLException("Economy account disappeared after upsert");
                 }
                 return new Account(
                         result.getObject("account_id", UUID.class),
+                        playerId,
                         result.getLong("balance")
                 );
             }
         }
+    }
+
+    private TransferAccounts lockTransferAccounts(Connection connection, EconomyTransfer transfer)
+            throws SQLException {
+        Account from = null;
+        Account to = null;
+        try (PreparedStatement statement = connection.prepareStatement(LOCK_TRANSFER_ACCOUNTS_SQL)) {
+            statement.setString(1, transfer.currencyCode());
+            statement.setObject(2, transfer.fromPlayerId());
+            statement.setObject(3, transfer.toPlayerId());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    UUID playerId = result.getObject("player_id", UUID.class);
+                    Account account = new Account(
+                            result.getObject("account_id", UUID.class),
+                            playerId,
+                            result.getLong("balance")
+                    );
+                    if (playerId.equals(transfer.fromPlayerId())) {
+                        from = account;
+                    } else if (playerId.equals(transfer.toPlayerId())) {
+                        to = account;
+                    }
+                }
+            }
+        }
+        if (from == null || to == null) {
+            throw new SQLException("Economy transfer accounts disappeared after upsert");
+        }
+        return new TransferAccounts(from, to);
     }
 
     private EconomyResult findExisting(
@@ -227,6 +360,63 @@ public final class EconomyLedger {
                         true
                 );
             }
+        }
+    }
+
+    private EconomyResult recordMutation(
+            Connection connection,
+            Account account,
+            EconomyMutation mutation,
+            long newBalance
+    ) throws SQLException {
+        UUID transactionId = UUID.randomUUID();
+        updateAccount(connection, account.accountId(), newBalance);
+        insertTransaction(connection, transactionId, account.accountId(), mutation, newBalance);
+        auditLog.append(
+                connection,
+                mutation.playerId(),
+                "economy.balance_changed",
+                mutation.correlationId(),
+                "economy:" + mutation.idempotencyKey(),
+                auditPayload(transactionId, mutation, newBalance)
+        );
+        return new EconomyResult(
+                transactionId,
+                account.accountId(),
+                mutation.delta(),
+                newBalance,
+                mutation.reason(),
+                mutation.correlationId(),
+                false
+        );
+    }
+
+    private static long checkedBalanceAfter(long currentBalance, long delta, String currencyCode) {
+        long newBalance;
+        try {
+            newBalance = Math.addExact(currentBalance, delta);
+        } catch (ArithmeticException exception) {
+            throw new EconomyException(
+                    EconomyException.Code.INVALID_MUTATION,
+                    "Economy balance overflow",
+                    exception
+            );
+        }
+        if (newBalance < 0) {
+            throw new EconomyException(
+                    EconomyException.Code.INSUFFICIENT_FUNDS,
+                    "Insufficient funds for " + currencyCode
+            );
+        }
+        return newBalance;
+    }
+
+    private static void requireCallerOwnedTransaction(Connection connection, String operation)
+            throws SQLException {
+        if (connection.getAutoCommit()) {
+            throw new IllegalArgumentException(
+                    operation + " requires a caller-owned transaction with autoCommit=false"
+            );
         }
     }
 
@@ -268,6 +458,32 @@ public final class EconomyLedger {
                 + ",\"balanceAfter\":" + newBalance + "}";
     }
 
+    private static String transferAuditPayload(
+            EconomyTransfer transfer,
+            EconomyResult debit,
+            EconomyResult credit
+    ) {
+        return "{\"fromPlayerId\":\"" + transfer.fromPlayerId()
+                + "\",\"toPlayerId\":\"" + transfer.toPlayerId()
+                + "\",\"currency\":\"" + transfer.currencyCode()
+                + "\",\"amount\":" + transfer.amount()
+                + ",\"debitTransactionId\":\"" + debit.transactionId()
+                + "\",\"creditTransactionId\":\"" + credit.transactionId()
+                + "\",\"fromBalanceAfter\":" + debit.balanceAfter()
+                + ",\"toBalanceAfter\":" + credit.balanceAfter() + "}";
+    }
+
+    private static EconomyException translateSqlFailure(String message, SQLException exception) {
+        if ("23505".equals(exception.getSQLState())) {
+            return new EconomyException(
+                    EconomyException.Code.IDEMPOTENCY_CONFLICT,
+                    "Economy idempotency key already belongs to another operation",
+                    exception
+            );
+        }
+        return storageFailure(message, exception);
+    }
+
     private static EconomyException storageFailure(String message, SQLException exception) {
         return new EconomyException(EconomyException.Code.STORAGE_FAILURE, message, exception);
     }
@@ -280,6 +496,9 @@ public final class EconomyLedger {
         }
     }
 
-    private record Account(UUID accountId, long balance) {
+    private record Account(UUID accountId, UUID playerId, long balance) {
+    }
+
+    private record TransferAccounts(Account from, Account to) {
     }
 }
