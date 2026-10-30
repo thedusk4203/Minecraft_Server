@@ -52,6 +52,7 @@ jobs:
           jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
           jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
           jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
+          jar tf "$plugin_jar" | grep -qx 'encounters/stone_warden.properties'
 
       - name: Run PostgreSQL integration tests
         run: gradle integrationTest --no-daemon
@@ -74,6 +75,13 @@ jobs:
           echo "encounter_run table exists: $table_exists"
           echo "$table_exists" | grep -qx 't'
           docker compose logs paper | grep -q 'validated encounter definition(s)'
+
+      - name: Check Stone Warden runtime wiring
+        run: |
+          boss="$(docker compose exec -T paper rcon-cli 'boss status')"
+          echo "$boss"
+          echo "$boss" | grep -q 'No active Stone Warden encounter.'
+          docker compose logs paper | grep -q 'Stone Warden combat runtime=READY'
 
       - name: Check gameplay dependencies
         run: |
