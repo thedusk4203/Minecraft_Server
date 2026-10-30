@@ -1,5 +1,9 @@
 # Market foundation — Phase 3C
 
+Status: **complete / frozen**
+
+The completed Phase 3 market foundation is frozen at merge SHA `8657de3c1116e95f051f04f465d686f8d8c39790`; merge-state CI `41017540269` passed.
+
 ## Decision
 
 The MVP market keeps **payment authority in MinecraftServerCore/PostgreSQL** instead of adopting a Vault-first auction/shop plugin.
@@ -40,11 +44,11 @@ The escrow token is therefore both a temporary item lock and the recovery identi
 
 ## Phase 3C2b — purchase and buyer delivery
 
-Status: in progress.
+Status: complete. PR #8 merged at `8657de3c1116e95f051f04f465d686f8d8c39790`; final-head CI `41016015451` and merge-state CI `41017540269` succeeded.
 
 ### Durable purchase model
 
-V5 adds a separate `market_purchase` table rather than overloading the seller listing row with payment metadata. A listing still owns item/price/seller state; a purchase owns buyer/payment/delivery state.
+V5 adds a separate `market_purchase` table rather than overloading the seller listing row with payment metadata. A listing owns item/price/seller state; a purchase owns buyer/payment/delivery state.
 
 Listing lifecycle:
 
@@ -116,7 +120,7 @@ Marked items remain protected by the Phase 3C2a escrow guard while delivery is u
 
 ### Seller/buyer recovery separation
 
-The same token can now legitimately appear in the buyer inventory even though the listing belongs to a different seller. Seller recovery therefore treats markers for foreign listing owners as protected, not orphaned. Buyer recovery verifies that the durable `market_purchase.buyer_player_id` matches the current player before acknowledging or cleaning a delivery marker.
+The same token can legitimately appear in the buyer inventory even though the listing belongs to a different seller. Seller recovery therefore treats markers for foreign listing owners as protected, not orphaned. Buyer recovery verifies that the durable `market_purchase.buyer_player_id` matches the current player before acknowledging or cleaning a delivery marker.
 
 ### Onboarding rule
 
@@ -129,9 +133,9 @@ Join guidance is durable-state driven:
 - currency but no market milestone -> `/market list` plus buy/sell guidance;
 - market milestone present -> current onboarding loop complete.
 
-### Failure injection requirements
+### Failure injection evidence
 
-Integration tests deliberately reserve the audit idempotency keys for `purchase-paid` and `purchase-completed`. These conflicts occur at the end of their respective transactions and must prove rollback of:
+Integration tests deliberately reserve the audit idempotency keys for `purchase-paid` and `purchase-completed`. These conflicts occur at the end of their respective transactions and prove rollback of:
 
 - buyer debit + seller credit;
 - market purchase/listing transition;
@@ -141,9 +145,9 @@ Integration tests deliberately reserve the audit idempotency keys for `purchase-
 
 Bukkit inventory access and `Player.saveData()` run on the server-owning thread. JDBC/Flyway/market repository work runs through the persistence executor. The explicit `saveData()` calls are limited to escrow/delivery boundaries where playerdata durability must precede a database terminal state.
 
-## Non-goals for the MVP market
+## Frozen non-goals
 
-Do not add yet:
+The Phase 3 market intentionally does not include:
 
 - bidding;
 - sophisticated auction search;
@@ -153,4 +157,4 @@ Do not add yet:
 - Redis solely for market state;
 - a Vault compatibility layer merely to reuse an external shop GUI.
 
-The immediate goal remains one understandable, recoverable trade path that cannot duplicate money or items.
+The frozen result is one understandable, recoverable player-to-player trade path that preserves the server's money and item-delivery correctness boundaries. Market feature expansion is deferred while Phase 4 begins PvE content.
