@@ -1,0 +1,51 @@
+name: minecraft-server-e2e
+
+services:
+  postgres-e2e:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: minecraft
+      POSTGRES_USER: minecraft
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minecraft -d minecraft"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - postgres-e2e-data:/var/lib/postgresql
+
+  paper-e2e:
+    image: itzg/minecraft-server:java25
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: "26.3"
+      ONLINE_MODE: "FALSE"
+      MEMORY: "3G"
+      MOTD: "Minecraft Server Stone Warden E2E"
+      ENABLE_RCON: "TRUE"
+      RCON_PASSWORD: "${RCON_PASSWORD:?RCON_PASSWORD is required}"
+      DATABASE_HOST: "postgres-e2e"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "minecraft"
+      DATABASE_USER: "minecraft"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      DATABASE_POOL_SIZE: "10"
+      MODRINTH_PROJECTS: |
+        griefprevention:16.18.7
+        auraskills:2.4.0
+      MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
+    ports:
+      - "25567:25565/tcp"
+    volumes:
+      - paper-e2e-data:/data
+      - ./build/libs:/plugins:ro
+      - ./config/paper-e2e:/config:ro
+    depends_on:
+      postgres-e2e:
+        condition: service_healthy
+
+volumes:
+  postgres-e2e-data:
+  paper-e2e-data:
