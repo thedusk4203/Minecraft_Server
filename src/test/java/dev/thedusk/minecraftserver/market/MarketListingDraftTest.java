@@ -3,6 +3,9 @@ package dev.thedusk.minecraftserver.market;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +17,7 @@ class MarketListingDraftTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 payload,
-                "a".repeat(64),
+                sha256(payload),
                 " Minecraft:Diamond ",
                 4,
                 " coins ",
@@ -30,17 +33,22 @@ class MarketListingDraftTest {
 
     @Test
     void rejectsInvalidHashMaterialAndPrice() {
+        byte[] payload = {1};
         assertThrows(
                 IllegalArgumentException.class,
-                () -> draft("not-a-hash", "minecraft:stone", 10L)
+                () -> draft(payload, "not-a-hash", "minecraft:stone", 10L)
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> draft("a".repeat(64), "not a material", 10L)
+                () -> draft(payload, "a".repeat(64), "minecraft:stone", 10L)
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> draft("a".repeat(64), "minecraft:stone", 0L)
+                () -> draft(payload, sha256(payload), "not a material", 10L)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> draft(payload, sha256(payload), "minecraft:stone", 0L)
         );
     }
 
@@ -49,24 +57,25 @@ class MarketListingDraftTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new MarketListingDraft(
-                        UUID.randomUUID(), UUID.randomUUID(), new byte[0], "a".repeat(64),
+                        UUID.randomUUID(), UUID.randomUUID(), new byte[0], sha256(new byte[0]),
                         "minecraft:stone", 1, "COINS", 1L, UUID.randomUUID()
                 )
         );
+        byte[] oversized = new byte[1_048_577];
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new MarketListingDraft(
-                        UUID.randomUUID(), UUID.randomUUID(), new byte[1_048_577], "a".repeat(64),
+                        UUID.randomUUID(), UUID.randomUUID(), oversized, sha256(oversized),
                         "minecraft:stone", 1, "COINS", 1L, UUID.randomUUID()
                 )
         );
     }
 
-    private static MarketListingDraft draft(String hash, String material, long price) {
+    private static MarketListingDraft draft(byte[] payload, String hash, String material, long price) {
         return new MarketListingDraft(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
-                new byte[]{1},
+                payload,
                 hash,
                 material,
                 1,
@@ -74,5 +83,13 @@ class MarketListingDraftTest {
                 price,
                 UUID.randomUUID()
         );
+    }
+
+    private static String sha256(byte[] payload) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new AssertionError(exception);
+        }
     }
 }
