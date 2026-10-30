@@ -37,6 +37,9 @@ jobs:
         with:
           gradle-version: '9.8.2'
 
+      - name: Prepare pinned crossplay plugins
+        run: bash scripts/fetch-crossplay-plugins.sh
+
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
@@ -111,7 +114,11 @@ jobs:
 
       - name: Check crossplay proxy plugins
         run: |
+          test -s build/crossplay-plugins/Geyser-Velocity.jar
+          test -s build/crossplay-plugins/floodgate-velocity.jar
           docker compose exec -T velocity sh -ec '
+            test -f plugins/Geyser-Velocity.jar
+            test -f plugins/floodgate-velocity.jar
             test -f plugins/Geyser-Velocity/config.yml
             test -f plugins/floodgate/config.yml
           '
