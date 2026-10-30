@@ -3,6 +3,8 @@ package dev.thedusk.minecraftserver;
 import dev.thedusk.minecraftserver.admin.AdminCommandHandler;
 import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
+import dev.thedusk.minecraftserver.boss.BossCommandHandler;
+import dev.thedusk.minecraftserver.boss.StoneWardenBossManager;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
 import dev.thedusk.minecraftserver.encounter.EncounterDefinitionRegistry;
 import dev.thedusk.minecraftserver.encounter.EncounterRunRepository;
@@ -39,6 +41,7 @@ public final class MinecraftServerCore extends JavaPlugin {
     private MarketPurchaseService marketPurchases;
     private EncounterDefinitionRegistry encounterDefinitions;
     private EncounterRunRepository encounterRuns;
+    private StoneWardenBossManager bossManager;
 
     @Override
     public void onEnable() {
@@ -61,6 +64,14 @@ public final class MinecraftServerCore extends JavaPlugin {
             UUID encounterRecoveryCorrelationId = UUID.randomUUID();
             int recoveredEncounterRuns = encounterRuns.recoverInterruptedRuns(
                     encounterRecoveryCorrelationId
+            );
+            bossManager = new StoneWardenBossManager(
+                    this,
+                    identities,
+                    encounterDefinitions,
+                    encounterRuns,
+                    persistenceExecutor,
+                    getLogger()
             );
 
             AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
@@ -129,15 +140,18 @@ public final class MinecraftServerCore extends JavaPlugin {
                     new MarketRecoveryListener(this, marketEscrow, marketPurchases),
                     this
             );
+            getServer().getPluginManager().registerEvents(bossManager, this);
 
             configureAdminCommand(diagnostics);
             configureMarketCommand();
+            configureBossCommand();
 
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
                             + " with PostgreSQL persistence, onboarding, land protection, AuraSkills, durable market"
                             + " and " + encounterDefinitions.size() + " validated encounter definition(s)"
+                            + "; Stone Warden combat runtime=READY"
                             + "; recoveredEncounterRuns=" + recoveredEncounterRuns
                             + "; recoveryCorrelation=" + encounterRecoveryCorrelationId
             );
@@ -173,6 +187,16 @@ public final class MinecraftServerCore extends JavaPlugin {
         ));
     }
 
+    private void configureBossCommand() {
+        PluginCommand command = Objects.requireNonNull(
+                getCommand("boss"),
+                "boss command must be declared in plugin.yml"
+        );
+        command.setExecutor(new BossCommandHandler(
+                Objects.requireNonNull(bossManager, "bossManager")
+        ));
+    }
+
     @Override
     public void onDisable() {
         closeResources();
@@ -180,6 +204,12 @@ public final class MinecraftServerCore extends JavaPlugin {
     }
 
     private void closeResources() {
+        StoneWardenBossManager activeBossManager = bossManager;
+        bossManager = null;
+        if (activeBossManager != null) {
+            activeBossManager.close();
+        }
+
         encounterRuns = null;
         encounterDefinitions = null;
         marketPurchases = null;
