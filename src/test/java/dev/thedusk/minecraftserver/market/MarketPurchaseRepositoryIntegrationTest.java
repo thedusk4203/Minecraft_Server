@@ -93,7 +93,7 @@ class MarketPurchaseRepositoryIntegrationTest {
         assertEquals(1L, countRows("market_purchase"));
         assertEquals(1L, countAudit("market.purchase_paid"));
         assertNull(onboarding.find(buyer.playerId()).orElseThrow().marketUsedAt());
-        assertTrue(onboarding.find(seller.playerId()).isEmpty());
+        assertNull(onboarding.find(seller.playerId()).orElseThrow().marketUsedAt());
     }
 
     @Test
@@ -309,7 +309,9 @@ class MarketPurchaseRepositoryIntegrationTest {
     }
 
     private static PlayerIdentity player(String name) {
-        return identities.recordSeen(UUID.randomUUID(), name);
+        PlayerIdentity identity = identities.recordSeen(UUID.randomUUID(), name);
+        onboarding.ensureStarted(identity.playerId());
+        return identity;
     }
 
     private static MarketListing listed(PlayerIdentity seller, long price) {
