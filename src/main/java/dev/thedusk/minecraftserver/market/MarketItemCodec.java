@@ -6,6 +6,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
@@ -34,7 +35,7 @@ public final class MarketItemCodec {
     }
 
     public Optional<UUID> escrowToken(ItemStack item) {
-        if (item == null || item.isEmpty()) {
+        if (item == null || item.getType() == Material.AIR || item.getAmount() <= 0) {
             return Optional.empty();
         }
         var meta = item.getItemMeta();
