@@ -65,6 +65,12 @@ jobs:
           echo "$plugins" | grep -qi 'GriefPrevention'
           echo "$plugins" | grep -qi 'AuraSkills'
 
+      - name: Check market command wiring
+        run: |
+          market="$(docker compose exec -T paper rcon-cli 'market list')"
+          echo "$market"
+          echo "$market" | grep -qi 'requires an online player'
+
       - name: Check crossplay proxy plugins
         run: |
           docker compose exec -T velocity sh -ec '
