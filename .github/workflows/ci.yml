@@ -50,6 +50,7 @@ jobs:
           echo "Checking runtime resources in $plugin_jar"
           jar tf "$plugin_jar" | grep -qx 'db/migration/V1__core_platform.sql'
           jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V7__encounter_rewards.sql'
           jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
           jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
           jar tf "$plugin_jar" | grep -qx 'encounters/stone_warden.properties'
@@ -69,11 +70,14 @@ jobs:
           echo "$health"
           echo "$health" | grep -q 'db=UP'
 
-      - name: Check encounter runtime foundation
+      - name: Check encounter and reward runtime foundation
         run: |
-          table_exists="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
-          echo "encounter_run table exists: $table_exists"
-          echo "$table_exists" | grep -qx 't'
+          encounter_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
+          reward_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_reward') IS NOT NULL")"
+          echo "encounter_run table exists: $encounter_table"
+          echo "encounter_reward table exists: $reward_table"
+          echo "$encounter_table" | grep -qx 't'
+          echo "$reward_table" | grep -qx 't'
           docker compose logs paper | grep -q 'validated encounter definition(s)'
 
       - name: Check Stone Warden runtime wiring
@@ -82,6 +86,7 @@ jobs:
           echo "$boss"
           echo "$boss" | grep -q 'No active Stone Warden encounter.'
           docker compose logs paper | grep -q 'Stone Warden combat runtime=READY'
+          docker compose logs paper | grep -q 'reconciledBossRewardRuns='
 
       - name: Check gameplay dependencies
         run: |
@@ -136,7 +141,7 @@ jobs:
       - name: Run Stone Warden real-client combat E2E
         run: node tools/e2e/stone-warden.cjs
 
-      - name: Verify Stone Warden durable completion and mechanics
+      - name: Verify Stone Warden durable completion, mechanics and solo reward
         run: |
           status=""
           for _ in $(seq 1 40); do
@@ -149,6 +154,17 @@ jobs:
           echo "durable Stone Warden status: $status"
           test "$status" = "COMPLETED"
 
+          reward_count="0"
+          for _ in $(seq 1 50); do
+            reward_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward r JOIN economy_transaction t ON t.transaction_id = r.currency_transaction_id JOIN economy_account a ON a.account_id = t.account_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND r.status = 'CURRENCY_GRANTED' AND r.currency_code = 'COINS' AND r.currency_amount = 250 AND t.delta = 250 AND t.reason = 'STONE_WARDEN_REWARD' AND a.player_id = r.player_id")"
+            if [[ "$reward_count" == "1" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable solo reward rows: $reward_count"
+          test "$reward_count" = "1"
+
           logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=started'
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=slam_telegraph'
@@ -158,7 +174,7 @@ jobs:
       - name: Run Stone Warden two-client party E2E
         run: node tools/e2e/stone-warden-party.cjs
 
-      - name: Verify Stone Warden party binding and completion
+      - name: Verify Stone Warden party binding, completion and rewards
         run: |
           status=""
           for _ in $(seq 1 40); do
@@ -174,6 +190,17 @@ jobs:
           participants="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_participant WHERE run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1)")"
           echo "durable party participant count: $participants"
           test "$participants" = "2"
+
+          reward_count="0"
+          for _ in $(seq 1 50); do
+            reward_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward r JOIN economy_transaction t ON t.transaction_id = r.currency_transaction_id JOIN economy_account a ON a.account_id = t.account_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND r.status = 'CURRENCY_GRANTED' AND r.currency_code = 'COINS' AND r.currency_amount = 250 AND t.delta = 250 AND t.reason = 'STONE_WARDEN_REWARD' AND a.player_id = r.player_id")"
+            if [[ "$reward_count" == "2" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable party reward rows: $reward_count"
+          test "$reward_count" = "2"
 
           logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=started .* participants=2'
