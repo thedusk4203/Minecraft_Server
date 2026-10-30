@@ -84,13 +84,19 @@ public final class EconomyLedger {
     /**
      * Applies a mutation using a transaction owned by the caller. This method never commits or rolls back
      * the supplied connection, allowing a domain workflow to make the ledger entry and its related durable
-     * milestone atomic.
+     * milestone atomic. The caller must disable auto-commit before invoking this method.
      */
     public EconomyResult applyInTransaction(Connection connection, EconomyMutation mutation) {
         Objects.requireNonNull(connection, "connection");
         Objects.requireNonNull(mutation, "mutation");
 
         try {
+            if (connection.getAutoCommit()) {
+                throw new IllegalArgumentException(
+                        "applyInTransaction requires a caller-owned transaction with autoCommit=false"
+                );
+            }
+
             Account account = lockOrCreateAccount(connection, mutation);
             EconomyResult existing = findExisting(connection, mutation, account.accountId());
             if (existing != null) {
