@@ -2,7 +2,7 @@
 
 Status: **FROZEN**
 
-Frozen base merge: `781a7252c57829d5e2da7daeee8bf0ea6cef7f4e`
+Frozen base merge: `9bd8eb5c0d345388ca0f12c4408ab544fe10ec58`
 
 ## Scope frozen
 
@@ -20,6 +20,7 @@ Frozen behavior:
 - participant-loss, wipe, timeout, spawn-failure and boss-death terminalization;
 - idempotent cleanup around the durable `encounter_run` lifecycle;
 - structured boss telemetry;
+- repeatable solo and two-client party E2E verification;
 - no loot, item or currency reward mutation in the combat slice.
 
 ## Verification receipts
@@ -33,7 +34,7 @@ PR #13 — `Phase 4B: Stone Warden combat vertical slice`
 - CI `41025886647` — **SUCCESS**;
 - build/unit/resource packaging/PostgreSQL/full Paper stack/market/dependency/crossplay regression gates passed.
 
-### Real-client gameplay receipt
+### Solo real-client gameplay receipt
 
 PR #14 — `Phase 4B verification: real-client Stone Warden E2E gate`
 
@@ -52,6 +53,25 @@ PR #14 — `Phase 4B verification: real-client Stone Warden E2E gate`
 - telemetry assertions passed for `started`, `slam_telegraph`, `charge_telegraph`, and `completed`;
 - E2E Paper/PostgreSQL volumes and ViaProxy process were cleaned after verification.
 
+### Two-client party gameplay receipt
+
+PR #15 — `Phase 4B verification: two-client Stone Warden party E2E`
+
+- merged at `9bd8eb5c0d345388ca0f12c4408ab544fe10ec58`;
+- exact verification head `c4cc1ee718f9b14e08c1c8ce551af14b21bd1186`;
+- CI `41031029381` — **SUCCESS**;
+- two independent Mineflayer 26.1 clients joined through pinned ViaProxy 3.4.14 into Paper 26.3;
+- normal Paper connection throttling remained enabled; the harness staggered logins rather than disabling it;
+- clients converged through client-authored movement before encounter start;
+- leader started `/boss start StoneWardenMate`;
+- both clients remained connected through the mechanic window;
+- leader completed the boss while the mate remained online and bound;
+- latest durable Stone Warden run finished as `COMPLETED`;
+- exactly two rows were present in `encounter_participant` for the completed run;
+- telemetry asserted `participants=2` at start and a terminal `completed` event;
+- the pre-existing solo real-client E2E remained green in the same CI run;
+- E2E cleanup passed.
+
 ## Security boundary
 
 The automated client verification does not weaken the normal server authentication path.
@@ -59,6 +79,7 @@ The automated client verification does not weaken the normal server authenticati
 - normal Velocity configuration remains `online-mode=true`;
 - the offline Paper stack exists only in `compose.e2e.yaml` for ephemeral CI;
 - Paper movement validation remains enabled;
+- Paper connection throttling remains enabled;
 - the Mineflayer `client_tick_end` compatibility shim exists only in test client code;
 - production boss/runtime code contains no E2E bypass.
 
@@ -70,8 +91,9 @@ The automated client verification does not weaken the normal server authenticati
 4. Terminalization remains idempotent and conflicting terminal outcomes cannot both commit.
 5. Only bound, arena-valid participants can damage Stone Warden.
 6. Obvious horizontal/vertical arena cheese is bounded by server-owned checks.
-7. Phase 4B grants no economic or item reward; combat correctness is isolated from reward anti-duplication semantics.
-8. Real-network-client completion is a required regression gate, not merely an RCON/plugin-load smoke test.
+7. Canonical participant binding is durable and proven with a real two-client party.
+8. Phase 4B grants no economic or item reward; combat correctness is isolated from reward anti-duplication semantics.
+9. Solo and party real-network-client completion are required regression gates, not merely RCON/plugin-load smoke tests.
 
 ## Explicit non-goals retained
 
