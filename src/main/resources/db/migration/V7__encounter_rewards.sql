@@ -7,7 +7,7 @@ CREATE TABLE encounter_reward (
     status VARCHAR(32) NOT NULL,
     currency_code VARCHAR(16) NOT NULL,
     currency_amount BIGINT NOT NULL,
-    currency_transaction_id UUID,
+    currency_transaction_id UUID REFERENCES economy_transaction(transaction_id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     version BIGINT NOT NULL DEFAULT 0,
