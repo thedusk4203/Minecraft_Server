@@ -58,6 +58,13 @@ jobs:
           echo "$health"
           echo "$health" | grep -q 'db=UP'
 
+      - name: Check encounter runtime foundation
+        run: |
+          table_exists="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
+          echo "encounter_run table exists: $table_exists"
+          echo "$table_exists" | grep -qx 't'
+          docker compose logs paper | grep -q 'validated encounter definition(s)'
+
       - name: Check gameplay dependencies
         run: |
           plugins="$(docker compose exec -T paper rcon-cli 'plugins')"
