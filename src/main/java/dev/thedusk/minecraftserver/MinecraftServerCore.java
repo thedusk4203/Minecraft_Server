@@ -25,11 +25,14 @@ import dev.thedusk.minecraftserver.onboarding.PlayerBootstrapListener;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
+import dev.thedusk.minecraftserver.reward.StoneWardenRewardService;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 public final class MinecraftServerCore extends JavaPlugin {
     private DatabaseManager database;
@@ -41,7 +44,10 @@ public final class MinecraftServerCore extends JavaPlugin {
     private MarketPurchaseService marketPurchases;
     private EncounterDefinitionRegistry encounterDefinitions;
     private EncounterRunRepository encounterRuns;
+    private StoneWardenRewardService bossRewards;
     private StoneWardenBossManager bossManager;
+    private BukkitTask bossRewardReconcileTask;
+    private final AtomicBoolean bossRewardReconcileInFlight = new AtomicBoolean();
 
     @Override
     public void onEnable() {
@@ -65,6 +71,8 @@ public final class MinecraftServerCore extends JavaPlugin {
             int recoveredEncounterRuns = encounterRuns.recoverInterruptedRuns(
                     encounterRecoveryCorrelationId
             );
+            bossRewards = new StoneWardenRewardService(database, auditLog, economy);
+            int reconciledBossRewardRuns = bossRewards.reconcileCompletedPending();
             bossManager = new StoneWardenBossManager(
                     this,
                     identities,
@@ -145,6 +153,7 @@ public final class MinecraftServerCore extends JavaPlugin {
             configureAdminCommand(diagnostics);
             configureMarketCommand();
             configureBossCommand();
+            startBossRewardReconciler();
 
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
@@ -154,6 +163,7 @@ public final class MinecraftServerCore extends JavaPlugin {
                             + "; Stone Warden combat runtime=READY"
                             + "; recoveredEncounterRuns=" + recoveredEncounterRuns
                             + "; recoveryCorrelation=" + encounterRecoveryCorrelationId
+                            + "; reconciledBossRewardRuns=" + reconciledBossRewardRuns
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -197,6 +207,39 @@ public final class MinecraftServerCore extends JavaPlugin {
         ));
     }
 
+    private void startBossRewardReconciler() {
+        bossRewardReconcileTask = getServer().getScheduler().runTaskTimer(
+                this,
+                () -> {
+                    StoneWardenRewardService rewards = bossRewards;
+                    PersistenceExecutor executor = persistenceExecutor;
+                    if (rewards == null || executor == null
+                            || !bossRewardReconcileInFlight.compareAndSet(false, true)) {
+                        return;
+                    }
+                    executor.submit(rewards::reconcileCompletedPending)
+                            .whenComplete((count, failure) -> {
+                                bossRewardReconcileInFlight.set(false);
+                                if (failure != null) {
+                                    getLogger().log(
+                                            Level.SEVERE,
+                                            "Failed to reconcile Stone Warden rewards",
+                                            failure
+                                    );
+                                    return;
+                                }
+                                if (count != null && count > 0) {
+                                    getLogger().info(
+                                            "BOSS_REWARD_TELEMETRY event=reconciled runs=" + count
+                                    );
+                                }
+                            });
+                },
+                20L,
+                100L
+        );
+    }
+
     @Override
     public void onDisable() {
         closeResources();
@@ -204,12 +247,20 @@ public final class MinecraftServerCore extends JavaPlugin {
     }
 
     private void closeResources() {
+        BukkitTask activeRewardTask = bossRewardReconcileTask;
+        bossRewardReconcileTask = null;
+        if (activeRewardTask != null) {
+            activeRewardTask.cancel();
+        }
+        bossRewardReconcileInFlight.set(false);
+
         StoneWardenBossManager activeBossManager = bossManager;
         bossManager = null;
         if (activeBossManager != null) {
             activeBossManager.close();
         }
 
+        bossRewards = null;
         encounterRuns = null;
         encounterDefinitions = null;
         marketPurchases = null;
