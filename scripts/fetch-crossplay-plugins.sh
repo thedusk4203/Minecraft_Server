@@ -23,7 +23,7 @@ require_command curl
 require_command python3
 require_command sha256sum
 
-fetch_plugin() {
+fetch_plugin() (
   local project="$1"
   local version="$2"
   local build="$3"
@@ -36,11 +36,7 @@ fetch_plugin() {
   local temp_file
   metadata_file="$(mktemp)"
   temp_file="$(mktemp "$OUTPUT_DIR/.${output_name}.XXXXXX")"
-
-  cleanup() {
-    rm -f "$metadata_file" "$temp_file"
-  }
-  trap cleanup RETURN
+  trap 'rm -f "$metadata_file" "$temp_file"' EXIT
 
   echo "Resolving pinned $project $version build $build..."
   curl --fail --silent --show-error --location \
@@ -88,7 +84,7 @@ PY
     existing_sha="$(sha256sum "$output_file" | awk '{print $1}')"
     if [[ "$existing_sha" == "$expected_sha" ]]; then
       echo "$output_name already matches pinned $project $version build $build ($expected_sha)."
-      return
+      exit 0
     fi
   fi
 
@@ -104,7 +100,7 @@ PY
 
   mv -f "$temp_file" "$output_file"
   echo "Verified $output_name sha256=$expected_sha"
-}
+)
 
 fetch_plugin geyser "$GEYSER_VERSION" "$GEYSER_BUILD" velocity "Geyser-Velocity.jar"
 fetch_plugin floodgate "$FLOODGATE_VERSION" "$FLOODGATE_BUILD" velocity "floodgate-velocity.jar"
