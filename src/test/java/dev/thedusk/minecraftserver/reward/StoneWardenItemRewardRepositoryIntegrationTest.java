@@ -132,6 +132,20 @@ class StoneWardenItemRewardRepositoryIntegrationTest {
     }
 
     @Test
+    void itemIntentAuditConflictRollsBackIntentInsert() throws Exception {
+        Scenario scenario = completedGrantedReward("ItemIntentRollback");
+        reserveAuditKey("encounter:reward:" + scenario.rewardId() + ":item-prepared");
+
+        EncounterRewardException exception = assertThrows(
+                EncounterRewardException.class,
+                () -> itemRewards.prepareEligibleIntents(UUID.randomUUID())
+        );
+
+        assertEquals(EncounterRewardException.Code.SEMANTIC_CONFLICT, exception.code());
+        assertEquals(0L, countRows("encounter_reward_item"));
+    }
+
+    @Test
     void snapshotAuditConflictRollsBackSnapshotTransition() throws Exception {
         Scenario scenario = completedGrantedReward("ItemSnapshotRollback");
         itemRewards.prepareEligibleIntents(UUID.randomUUID());
