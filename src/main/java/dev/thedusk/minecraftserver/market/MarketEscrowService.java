@@ -2,6 +2,7 @@ package dev.thedusk.minecraftserver.market;
 
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -141,7 +142,7 @@ public final class MarketEscrowService {
                                 + " §f" + listing.itemAmount() + "x " + listing.materialKey()
                                 + " §7- §a" + listing.priceAmount() + " " + listing.currencyCode());
                     }
-                    current.sendMessage("§7Mua item sẽ được mở ở Phase 3C2b sau khi delivery recovery hoàn tất.");
+                    current.sendMessage("§7Dùng §f/market buy <#> §7để mua listing.");
                 }));
     }
 
@@ -222,11 +223,15 @@ public final class MarketEscrowService {
         if (player == null || !player.isOnline() || player.isDead()) {
             return;
         }
-        if (listing.status() == MarketListingStatus.LISTED) {
+        if (listing.status() == MarketListingStatus.LISTED
+                || listing.status() == MarketListingStatus.DELIVERY_PENDING
+                || listing.status() == MarketListingStatus.COMPLETED) {
             if (removeToken(player.getInventory(), listing.escrowToken()) > 0) {
-                bestEffortSave(player, "remove duplicate item for listed escrow");
+                bestEffortSave(player, "remove duplicate item for durable escrow");
             }
-            player.sendMessage("§aListing #" + listing.listingNumber() + " đã sẵn sàng trên market.");
+            if (listing.status() == MarketListingStatus.LISTED) {
+                player.sendMessage("§aListing #" + listing.listingNumber() + " đã sẵn sàng trên market.");
+            }
             return;
         }
         if (listing.status() != MarketListingStatus.PREPARED) {
@@ -366,15 +371,30 @@ public final class MarketEscrowService {
         var identity = identities.recordSeen(minecraftUuid, playerName);
         List<MarketListing> open = listings.findOpenBySeller(identity.playerId());
         var byToken = new java.util.HashMap<UUID, MarketListing>();
+        Set<UUID> protectedForeignTokens = new HashSet<>();
         for (MarketListing listing : open) {
             byToken.put(listing.escrowToken(), listing);
         }
         for (UUID token : inventoryTokens) {
-            if (!byToken.containsKey(token)) {
-                listings.findByEscrowToken(token).ifPresent(listing -> byToken.put(token, listing));
+            if (byToken.containsKey(token)) {
+                continue;
             }
+            listings.findByEscrowToken(token).ifPresent(listing -> {
+                if (listing.sellerPlayerId().equals(identity.playerId())) {
+                    byToken.put(token, listing);
+                } else {
+                    // A foreign listing token may be a legitimate buyer delivery marker.
+                    protectedForeignTokens.add(token);
+                }
+            });
         }
-        return new RecoveryPlan(identity.playerId(), open, byToken, preparationsAtStart);
+        return new RecoveryPlan(
+                identity.playerId(),
+                open,
+                byToken,
+                preparationsAtStart,
+                protectedForeignTokens
+        );
     }
 
     private void applyRecoveryPlan(UUID minecraftUuid, RecoveryPlan plan) {
@@ -389,7 +409,8 @@ public final class MarketEscrowService {
         for (UUID token : inventoryTokens) {
             MarketListing listing = plan.byToken().get(token);
             if (listing == null) {
-                if (!plan.deferredPreparationTokens().contains(token)) {
+                if (!plan.deferredPreparationTokens().contains(token)
+                        && !plan.protectedForeignTokens().contains(token)) {
                     changed |= stripToken(inventory, token) > 0;
                 }
                 continue;
@@ -398,7 +419,7 @@ public final class MarketEscrowService {
                 case PREPARED, RETURN_PENDING -> {
                     // PREPARED is finalized below; RETURN_PENDING is delivered/acknowledged below.
                 }
-                case LISTED -> changed |= removeToken(inventory, token) > 0;
+                case LISTED, DELIVERY_PENDING, COMPLETED -> changed |= removeToken(inventory, token) > 0;
                 case CANCELLED -> changed |= stripToken(inventory, token) > 0;
             }
         }
@@ -412,8 +433,8 @@ public final class MarketEscrowService {
             switch (listing.status()) {
                 case PREPARED -> finalizePreparedEscrow(minecraftUuid, listing);
                 case RETURN_PENDING -> deliverReturn(minecraftUuid, listing);
-                case LISTED, CANCELLED -> {
-                    // No additional transition required.
+                case LISTED, CANCELLED, DELIVERY_PENDING, COMPLETED -> {
+                    // No additional seller transition required.
                 }
             }
         }
@@ -500,13 +521,15 @@ public final class MarketEscrowService {
             UUID sellerPlayerId,
             List<MarketListing> openListings,
             Map<UUID, MarketListing> byToken,
-            Set<UUID> deferredPreparationTokens
+            Set<UUID> deferredPreparationTokens,
+            Set<UUID> protectedForeignTokens
     ) {
         private RecoveryPlan {
             Objects.requireNonNull(sellerPlayerId, "sellerPlayerId");
             openListings = List.copyOf(openListings);
             byToken = Map.copyOf(byToken);
             deferredPreparationTokens = Set.copyOf(deferredPreparationTokens);
+            protectedForeignTokens = Set.copyOf(protectedForeignTokens);
         }
     }
 }

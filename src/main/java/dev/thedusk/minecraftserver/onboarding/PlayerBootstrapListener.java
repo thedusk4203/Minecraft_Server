@@ -88,7 +88,13 @@ public final class PlayerBootstrapListener implements Listener {
                 return;
             }
 
-            player.sendMessage("§aBạn đã hoàn tất các bước onboarding hiện có. §7Tiếp tục sinh tồn và tích lũy tài nguyên cho bước giao dịch tiếp theo.");
+            if (!progress.marketUsed()) {
+                player.sendMessage("§6Mục tiêu hiện tại: §fhoàn thành giao dịch market đầu tiên.");
+                player.sendMessage("§7Dùng §f/market list §7để xem listing rồi §f/market buy <#>§7; nếu market trống, bạn có thể cầm một stack và dùng §f/market sell <giá>§7.");
+                return;
+            }
+
+            player.sendMessage("§aBạn đã hoàn tất vòng onboarding hiện tại: claim đất, nhận coin và giao dịch market.");
         });
     }
 

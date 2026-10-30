@@ -92,7 +92,7 @@ public final class AuraSkillsOnboardingListener implements Listener {
             if (!result.landClaimed()) {
                 player.sendMessage("§7Mục tiêu hiện tại vẫn là tạo một claim bảo vệ đất bằng xẻng vàng.");
             } else {
-                player.sendMessage("§7Bạn đã hoàn thành hai bước đầu. Tiếp tục tích lũy tài nguyên cho mục tiêu giao dịch tiếp theo.");
+                player.sendMessage("§7Bước tiếp theo: dùng §f/market list §7và hoàn thành giao dịch market đầu tiên.");
             }
         });
     }

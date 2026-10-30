@@ -25,4 +25,8 @@ public record OnboardingProgress(
     public boolean firstCurrencyEarned() {
         return firstCurrencyEarnedAt != null;
     }
+
+    public boolean marketUsed() {
+        return marketUsedAt != null;
+    }
 }

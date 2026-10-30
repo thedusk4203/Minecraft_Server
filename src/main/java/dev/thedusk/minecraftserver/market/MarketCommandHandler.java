@@ -9,10 +9,12 @@ import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
 public final class MarketCommandHandler implements CommandExecutor {
-    private final MarketEscrowService market;
+    private final MarketEscrowService escrow;
+    private final MarketPurchaseService purchases;
 
-    public MarketCommandHandler(MarketEscrowService market) {
-        this.market = Objects.requireNonNull(market, "market");
+    public MarketCommandHandler(MarketEscrowService escrow, MarketPurchaseService purchases) {
+        this.escrow = Objects.requireNonNull(escrow, "escrow");
+        this.purchases = Objects.requireNonNull(purchases, "purchases");
     }
 
     @Override
@@ -33,11 +35,13 @@ public final class MarketCommandHandler implements CommandExecutor {
 
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "sell" -> sell(player, args);
-            case "list" -> market.list(player);
+            case "list" -> escrow.list(player);
+            case "buy" -> buy(player, args);
             case "cancel" -> cancel(player, args);
             case "recover" -> {
-                market.recover(player);
-                player.sendMessage("§7Đang kiểm tra escrow cần khôi phục...");
+                escrow.recover(player);
+                purchases.recover(player);
+                player.sendMessage("§7Đang kiểm tra escrow và delivery cần khôi phục...");
             }
             default -> usage(player);
         }
@@ -54,7 +58,20 @@ public final class MarketCommandHandler implements CommandExecutor {
             player.sendMessage("§cGiá phải là số nguyên dương.");
             return;
         }
-        market.sell(player, price);
+        escrow.sell(player, price);
+    }
+
+    private void buy(Player player, String[] args) {
+        if (args.length != 2) {
+            player.sendMessage("§eCách dùng: /market buy <listing #>");
+            return;
+        }
+        Long listingNumber = listingNumber(args[1]);
+        if (listingNumber == null) {
+            player.sendMessage("§cListing ID phải là số nguyên dương.");
+            return;
+        }
+        purchases.buy(player, listingNumber);
     }
 
     private void cancel(Player player, String[] args) {
@@ -62,12 +79,16 @@ public final class MarketCommandHandler implements CommandExecutor {
             player.sendMessage("§eCách dùng: /market cancel <listing #>");
             return;
         }
-        Long listingNumber = positiveLong(args[1].startsWith("#") ? args[1].substring(1) : args[1]);
+        Long listingNumber = listingNumber(args[1]);
         if (listingNumber == null) {
             player.sendMessage("§cListing ID phải là số nguyên dương.");
             return;
         }
-        market.cancel(player, listingNumber);
+        escrow.cancel(player, listingNumber);
+    }
+
+    private static Long listingNumber(String value) {
+        return positiveLong(value.startsWith("#") ? value.substring(1) : value);
     }
 
     private static Long positiveLong(String value) {
@@ -83,7 +104,8 @@ public final class MarketCommandHandler implements CommandExecutor {
         player.sendMessage("§6Market commands:");
         player.sendMessage("§e/market sell <giá> §7- đưa stack đang cầm vào escrow");
         player.sendMessage("§e/market list §7- xem tối đa 20 listing đang mở");
+        player.sendMessage("§e/market buy <#> §7- mua listing và nhận item");
         player.sendMessage("§e/market cancel <#> §7- hủy listing của bạn và trả item");
-        player.sendMessage("§e/market recover §7- tiếp tục escrow bị gián đoạn");
+        player.sendMessage("§e/market recover §7- tiếp tục escrow/delivery bị gián đoạn");
     }
 }

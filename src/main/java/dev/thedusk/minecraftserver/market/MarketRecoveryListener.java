@@ -10,20 +10,30 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 public final class MarketRecoveryListener implements Listener {
     private final JavaPlugin plugin;
-    private final MarketEscrowService market;
+    private final MarketEscrowService escrow;
+    private final MarketPurchaseService purchases;
 
-    public MarketRecoveryListener(JavaPlugin plugin, MarketEscrowService market) {
+    public MarketRecoveryListener(
+            JavaPlugin plugin,
+            MarketEscrowService escrow,
+            MarketPurchaseService purchases
+    ) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
-        this.market = Objects.requireNonNull(market, "market");
+        this.escrow = Objects.requireNonNull(escrow, "escrow");
+        this.purchases = Objects.requireNonNull(purchases, "purchases");
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(PlayerJoinEvent event) {
-        market.recover(event.getPlayer());
+        escrow.recover(event.getPlayer());
+        purchases.recover(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerRespawn(PlayerRespawnEvent event) {
-        plugin.getServer().getScheduler().runTask(plugin, () -> market.recover(event.getPlayer()));
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            escrow.recover(event.getPlayer());
+            purchases.recover(event.getPlayer());
+        });
     }
 }

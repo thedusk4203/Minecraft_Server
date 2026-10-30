@@ -50,40 +50,41 @@ Reconnect before completing the claim objective intentionally repeats the remind
 
 ### First skill and currency
 
-After land is protected, the current guidance asks the player to gain an AuraSkills level. Use `/skills` to view available skills and perform ordinary survival activities such as mining, farming, foraging or combat.
+After land is protected, the guidance asks the player to gain an AuraSkills level. Use `/skills` and perform ordinary survival activities such as mining, farming, foraging or combat.
 
-The first observed AuraSkills level-up records:
+The first observed level-up records the first skill and grants one `100 COINS` teaching credit through `MinecraftServerCore`; AuraSkills/Vault does not mutate the authoritative economy.
 
-- first skill timestamp;
-- first skill ID;
-- level reached;
-- first-currency timestamp;
-- one immutable economy-ledger credit of `100 COINS`.
-
-The money is granted by `MinecraftServerCore`, not AuraSkills/Vault. The deterministic ledger idempotency key prevents repeated or concurrent level-up events from paying the onboarding grant twice.
-
-### Seller market escrow — Phase 3C2a
+### End-to-end market loop
 
 Market use is enabled for normal players through `minecraftserver.market`.
 
-Current commands:
+Commands:
 
-- `/market sell <price>` — escrow the entire stack currently held in the main hand and publish it after durable removal from playerdata;
-- `/market list` — display up to 20 active LISTED rows;
-- `/market cancel <listing #>` — move the seller's listing through RETURN_PENDING and return the item before terminal cancellation;
-- `/market recover` — retry interrupted PREPARED/RETURN_PENDING transitions.
+- `/market sell <price>` — escrow the entire main-hand stack and publish it after durable playerdata removal;
+- `/market list` — show up to 20 active listings;
+- `/market buy <listing #>` — atomically pay one seller and start retry-safe buyer delivery;
+- `/market cancel <listing #>` — cancel your unsold listing and recover the escrow item;
+- `/market recover` — retry interrupted seller escrow and buyer delivery state.
 
-A temporary internal PDC marker appears only while an item is participating in the escrow saga. Marked items are locked against normal player movement/use and are kept through death. Do not remove the marker manually; use `/market recover` if a transition is interrupted.
+A temporary internal PDC escrow token is used while an item participates in a seller return or buyer delivery saga. Marked items are locked against normal movement/use and are kept through death. Do not remove the marker manually.
 
-Buyer purchase is intentionally unavailable in Phase 3C2a. A visible listing proves seller-side escrow only; Phase 3C2b will add atomic payment and retry-safe buyer delivery. `market_used_at` is therefore not recorded yet.
+Suggested two-player verification:
 
-Suggested manual recovery checks:
+1. Player A completes claim + first skill/currency onboarding, holds a disposable stack and runs `/market sell 25`.
+2. Confirm the stack leaves A's inventory and `/market list` exposes one LISTED row.
+3. Player B, with at least 25 COINS, runs `/market buy <#>`.
+4. Confirm B receives exactly one item, B loses exactly 25 COINS and A gains exactly 25 COINS.
+5. Re-run `/market buy <#>` as B; it must not charge again or create another item.
+6. Attempt the same listing as a third player; it must no longer be buyable.
+7. Reconnect A and B. The sold listing must not reappear and no duplicate item should be produced.
+8. Verify both players now have `market_used_at`; payment alone is insufficient—the milestone is written only after buyer delivery reaches COMPLETED.
 
-1. Hold a disposable stack and run `/market sell 25`.
-2. Confirm the stack leaves inventory and `/market list` shows the new listing.
-3. Run `/market cancel <#>` and confirm the exact stack returns.
-4. Repeat with a full inventory: cancellation should remain RETURN_PENDING until one slot is free, then `/market recover` should finish it.
-5. Reconnect while a recovery is pending and confirm the same transition resumes without an extra item.
+Suggested recovery checks:
+
+- Seller cancellation with full inventory remains RETURN_PENDING until a slot is free, then `/market recover` finishes it.
+- Buyer purchase with full inventory remains DELIVERY_PENDING after payment; free one slot and run `/market recover`.
+- Disconnect a buyer after payment but before delivery finishes; reconnect must resume the same purchase without charging twice.
+- If a marked delivery item survives but the DB acknowledgement was interrupted, `/market recover` must acknowledge that same item rather than mint another.
 
 ## Stop
 

@@ -110,7 +110,7 @@ Receipt:
 - Final-head CI `41003473192` succeeded.
 
 #### Phase 3C2a — Seller item escrow + listing
-Status: in progress
+Status: complete
 
 Scope:
 - PostgreSQL V4 durable listing/escrow state
@@ -122,32 +122,34 @@ Scope:
 - returned item is persisted to playerdata before terminal `CANCELLED`
 - reconnect and `/market recover` reconcile interrupted prepare/activate/cancel flows
 - minimal `/market sell`, `/market list`, `/market cancel`, `/market recover` surface
-- no buyer payment and no `market_used_at` in this slice
 
-Exit gate:
-- Seller can escrow the held stack and obtain a durable `LISTED` listing.
-- `PREPARED` retry by escrow token cannot create a duplicate listing.
-- Wrong-owner cancellation cannot expose or return another seller's item.
-- Crash/reconnect recovery can finish PREPARED activation or RETURN_PENDING cancellation without duplicating or losing the item.
-- Listing snapshot and state survive database restart.
-- Full stack loads V4 and `/market` command wiring while existing gameplay/crossplay smoke remains green.
+Receipt:
+- PR #7 merged at `8ccfa391cdc1ef86194b9795f4fff3066d7d4b41`.
+- Final-head CI `41013473040` succeeded.
 
 #### Phase 3C2b — Purchase settlement + buyer delivery + first trade
-Status: planned
+Status: in progress
 
-Scope direction:
-- reserve an active listing for one buyer
-- settle payment through the Phase 3C1 atomic transfer primitive
-- durable paid/delivery-pending state
-- retry-safe buyer item delivery with explicit acknowledgement
-- first completed market action records `market_used_at` exactly once
-- onboarding advances only after delivery reaches terminal success
+Scope:
+- PostgreSQL V5 `market_purchase` state separate from seller listing state
+- one buyer serializes ownership of a `LISTED` row before payment can settle
+- payment composes Phase 3C1 `EconomyTransfer` in the same transaction as `DELIVERY_PENDING`
+- deterministic per-listing payment idempotency key prevents double charge
+- buyer item delivery reuses the escrow token as an exactly-once recovery identity
+- marked item is persisted to playerdata before database delivery acknowledgement
+- reconnect/respawn/manual recovery finishes interrupted delivery
+- first completed market action records `market_used_at` for both buyer and seller
+- onboarding guidance points directly to `/market list`, `/market buy`, and `/market sell`
 
 Exit gate:
 - A player with onboarding currency can buy one listing without staff intervention.
 - Payment is charged exactly once and seller is credited exactly once.
+- Two concurrent buyers cannot both acquire the same listing.
+- Insufficient funds leaves the listing available and creates no purchase.
 - Crash/retry cannot duplicate the purchased item or charge twice.
 - `market_used_at` is written only after completed delivery.
+- Final payment and completion transaction boundaries fail closed under injected audit conflicts.
+- Full Paper/crossplay stack remains green.
 
 ## Phase 4 — PvE content
 Deliverables:
@@ -225,17 +227,18 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Finish Phase 3C2a and prove seller escrow recovery before implementing buyer settlement.
+Finish Phase 3C2b and prove the complete first market transaction in CI.
 
 Acceptance checklist:
-- V4 migrates on PostgreSQL 18;
-- PREPARED creation is idempotent by escrow token;
-- item snapshot stores raw NBT bytes plus integrity hash;
-- escrow marker is durable before PREPARED becomes durable;
-- inventory removal is durable before LISTED becomes durable;
-- return delivery is durable before CANCELLED becomes durable;
-- marked items are protected from player mutation/drop/death loss;
-- wrong-owner cancellation fails closed;
-- repository state transitions and restart persistence are covered by integration tests;
-- `/market` is registered in the full Paper stack;
-- all existing economy/onboarding/crossplay tests remain green.
+- V5 migrates on PostgreSQL 18;
+- payment debit + seller credit + durable purchase + listing reservation are one transaction;
+- payment replay returns the original ledger identity and does not move money twice;
+- concurrent buyers serialize so one listing has one buyer;
+- insufficient funds and self-purchase fail before listing ownership changes;
+- buyer delivery marker is durable before `COMPLETED` can commit;
+- completed-delivery recovery strips stale markers without minting a second item;
+- seller recovery preserves foreign buyer delivery markers;
+- `market_used_at` remains null after payment and is written only at completed delivery;
+- injected audit conflicts prove payment/completion rollback boundaries;
+- onboarding guidance exposes the live market objective;
+- all existing economy/onboarding/escrow/crossplay tests remain green.
