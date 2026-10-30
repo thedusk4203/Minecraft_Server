@@ -30,6 +30,14 @@ CREATE TABLE encounter_run (
                 AND ended_at IS NOT NULL
                 AND terminal_correlation_id IS NOT NULL)
         ),
+    CONSTRAINT encounter_run_terminal_reason_chk
+        CHECK (
+            (status IN ('ACTIVE', 'COMPLETED') AND terminal_reason IS NULL)
+            OR
+            (status IN ('FAILED', 'ABANDONED')
+                AND terminal_reason IS NOT NULL
+                AND BTRIM(terminal_reason) <> '')
+        ),
     CONSTRAINT encounter_run_version_chk
         CHECK (version >= 0)
 );
