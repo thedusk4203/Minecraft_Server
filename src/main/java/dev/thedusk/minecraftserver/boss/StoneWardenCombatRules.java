@@ -3,6 +3,7 @@ package dev.thedusk.minecraftserver.boss;
 public final class StoneWardenCombatRules {
     public static final double ARENA_RADIUS = 18.0;
     public static final double PARTICIPANT_RADIUS = 24.0;
+    public static final double VERTICAL_TOLERANCE = 8.0;
     public static final double SLAM_RADIUS = 5.5;
     public static final double CHARGE_WIDTH = 1.5;
     public static final double BASE_HEALTH = 160.0;
@@ -29,6 +30,20 @@ public final class StoneWardenCombatRules {
         double dx = pointX - centerX;
         double dz = pointZ - centerZ;
         return dx * dx + dz * dz <= radius * radius;
+    }
+
+    public static boolean insideArena(
+            double centerX,
+            double centerY,
+            double centerZ,
+            double pointX,
+            double pointY,
+            double pointZ,
+            double radius,
+            double verticalTolerance
+    ) {
+        return Math.abs(pointY - centerY) <= verticalTolerance
+                && insideRadius2d(centerX, centerZ, pointX, pointZ, radius);
     }
 
     public static double distanceSquaredToSegment2d(
