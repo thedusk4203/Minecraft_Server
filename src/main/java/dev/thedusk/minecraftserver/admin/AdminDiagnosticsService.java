@@ -19,7 +19,12 @@ public final class AdminDiagnosticsService {
                 (SELECT COUNT(*) FROM economy_transaction) AS economy_transactions,
                 (SELECT COUNT(*) FROM audit_event) AS audit_events,
                 (SELECT COUNT(*) FROM encounter_run) AS encounter_runs,
-                (SELECT COUNT(*) FROM encounter_run WHERE status = 'ACTIVE') AS active_encounter_runs
+                (SELECT COUNT(*) FROM encounter_run WHERE status = 'ACTIVE') AS active_encounter_runs,
+                (SELECT COUNT(*) FROM encounter_reward) AS encounter_rewards,
+                (SELECT COUNT(*) FROM encounter_reward WHERE status = 'PENDING') AS pending_encounter_rewards,
+                (SELECT COUNT(*) FROM encounter_reward_item) AS encounter_reward_items,
+                (SELECT COUNT(*) FROM encounter_reward_item WHERE status <> 'DELIVERED')
+                    AS pending_encounter_reward_items
             """;
 
     private static final String ACTOR_SQL = """
@@ -65,6 +70,10 @@ public final class AdminDiagnosticsService {
                 counts.auditEvents(),
                 counts.encounterRuns(),
                 counts.activeEncounterRuns(),
+                counts.encounterRewards(),
+                counts.pendingEncounterRewards(),
+                counts.encounterRewardItems(),
+                counts.pendingEncounterRewardItems(),
                 database.activeConnections(),
                 database.idleConnections()
         );
@@ -114,7 +123,11 @@ public final class AdminDiagnosticsService {
                     result.getLong("economy_transactions"),
                     result.getLong("audit_events"),
                     result.getLong("encounter_runs"),
-                    result.getLong("active_encounter_runs")
+                    result.getLong("active_encounter_runs"),
+                    result.getLong("encounter_rewards"),
+                    result.getLong("pending_encounter_rewards"),
+                    result.getLong("encounter_reward_items"),
+                    result.getLong("pending_encounter_reward_items")
             );
         }
     }
@@ -155,7 +168,11 @@ public final class AdminDiagnosticsService {
             long economyTransactions,
             long auditEvents,
             long encounterRuns,
-            long activeEncounterRuns
+            long activeEncounterRuns,
+            long encounterRewards,
+            long pendingEncounterRewards,
+            long encounterRewardItems,
+            long pendingEncounterRewardItems
     ) {
     }
 }
