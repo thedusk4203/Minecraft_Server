@@ -77,7 +77,8 @@ public final class DatabaseManager implements AutoCloseable {
         ClassLoader pluginClassLoader = DatabaseManager.class.getClassLoader();
         if (pluginClassLoader.getResource(MIGRATION_SENTINEL) == null) {
             throw new PersistenceException(
-                    "Core migration resource is missing from the plugin runtime: " + MIGRATION_SENTINEL
+                    "Core migration resource is missing from the plugin runtime: " + MIGRATION_SENTINEL,
+                    null
             );
         }
 
