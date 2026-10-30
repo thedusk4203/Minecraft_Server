@@ -13,7 +13,14 @@ import dev.thedusk.minecraftserver.economy.EconomyResult;
 import dev.thedusk.minecraftserver.identity.PlayerIdentity;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -104,6 +111,59 @@ class CorePersistenceIntegrationTest {
     }
 
     @Test
+    void concurrentDuplicateCreditIsAppliedExactlyOnce() throws Exception {
+        PlayerIdentity player = identities.recordSeen(UUID.randomUUID(), "RaceReplay");
+        EconomyMutation mutation = new EconomyMutation(
+                player.playerId(),
+                "COINS",
+                100L,
+                "test.concurrent-credit",
+                "test-concurrent-credit-once",
+                UUID.randomUUID(),
+                "{}"
+        );
+
+        List<EconomyResult> results = applyConcurrently(mutation, mutation);
+
+        assertEquals(1L, results.stream().filter(EconomyResult::idempotentReplay).count());
+        assertEquals(results.get(0).transactionId(), results.get(1).transactionId());
+        assertEquals(100L, economy.balance(player.playerId(), "COINS"));
+        assertEquals(1L, countRows("economy_transaction"));
+        assertEquals(1L, countRows("audit_event"));
+    }
+
+    @Test
+    void concurrentDistinctCreditsSerializeWithoutLostUpdates() throws Exception {
+        PlayerIdentity player = identities.recordSeen(UUID.randomUUID(), "RaceBalance");
+        EconomyMutation first = new EconomyMutation(
+                player.playerId(),
+                "COINS",
+                100L,
+                "test.concurrent-credit",
+                "test-concurrent-credit-a",
+                UUID.randomUUID(),
+                "{}"
+        );
+        EconomyMutation second = new EconomyMutation(
+                player.playerId(),
+                "COINS",
+                150L,
+                "test.concurrent-credit",
+                "test-concurrent-credit-b",
+                UUID.randomUUID(),
+                "{}"
+        );
+
+        List<EconomyResult> results = applyConcurrently(first, second);
+
+        assertEquals(2, results.size());
+        assertTrue(results.stream().noneMatch(EconomyResult::idempotentReplay));
+        assertEquals(250L, economy.balance(player.playerId(), "COINS"));
+        assertEquals(2L, countRows("economy_transaction"));
+        assertEquals(2L, countRows("audit_event"));
+    }
+
+    @Test
     void debitCannotMakeBalanceNegative() throws SQLException {
         PlayerIdentity player = identities.recordSeen(UUID.randomUUID(), "NoDebtUser");
         EconomyMutation mutation = new EconomyMutation(
@@ -157,6 +217,37 @@ class CorePersistenceIntegrationTest {
 
         assertEquals(EconomyException.Code.IDEMPOTENCY_CONFLICT, exception.code());
         assertEquals(100L, economy.balance(player.playerId(), "COINS"));
+    }
+
+    private static List<EconomyResult> applyConcurrently(EconomyMutation... mutations) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(mutations.length);
+        CountDownLatch ready = new CountDownLatch(mutations.length);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<EconomyResult>> futures = new ArrayList<>();
+
+        try {
+            for (EconomyMutation mutation : mutations) {
+                futures.add(executor.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Timed out waiting for concurrent economy start gate");
+                    }
+                    return economy.apply(mutation);
+                }));
+            }
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS), "Workers did not reach concurrency barrier");
+            start.countDown();
+
+            List<EconomyResult> results = new ArrayList<>();
+            for (Future<EconomyResult> future : futures) {
+                results.add(future.get(10, TimeUnit.SECONDS));
+            }
+            return results;
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
     }
 
     private static long countRows(String table) throws SQLException {
