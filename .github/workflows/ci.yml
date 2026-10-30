@@ -58,11 +58,12 @@ jobs:
           echo "$health"
           echo "$health" | grep -q 'db=UP'
 
-      - name: Check land protection plugin
+      - name: Check gameplay dependencies
         run: |
           plugins="$(docker compose exec -T paper rcon-cli 'plugins')"
           echo "$plugins"
           echo "$plugins" | grep -qi 'GriefPrevention'
+          echo "$plugins" | grep -qi 'AuraSkills'
 
       - name: Check crossplay proxy plugins
         run: |
@@ -77,7 +78,7 @@ jobs:
 
       - name: Show service logs on failure
         if: failure()
-        run: docker compose logs --tail=250
+        run: docker compose logs --tail=300
 
       - name: Stop local stack
         if: always()
