@@ -11,6 +11,7 @@ const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const ATTACK_REACH = 3.6;
+const PARTY_CONVERGENCE_DISTANCE = 9.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 function sleep(ms) {
@@ -125,6 +126,8 @@ function assertConnected(tracked, context) {
 async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
   const { bot } = tracked;
   const deadline = Date.now() + timeoutMs;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let lastProgressAt = Date.now();
   bot.setControlState('sprint', true);
   try {
     while (Date.now() < deadline) {
@@ -133,17 +136,21 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
       if (!target) {
         return false;
       }
-      if (horizontalDistance(bot.entity.position, target) <= stopDistance) {
+
+      const distance = horizontalDistance(bot.entity.position, target);
+      if (distance <= stopDistance) {
         return true;
+      }
+      if (distance + 0.15 < bestDistance) {
+        bestDistance = distance;
+        lastProgressAt = Date.now();
       }
 
       await bot.lookAt(target.offset(0, 0.8, 0), true);
       bot.setControlState('forward', true);
-      if (bot.entity.onGround && target.y - bot.entity.position.y > 0.8) {
-        bot.setControlState('jump', true);
-      } else {
-        bot.setControlState('jump', false);
-      }
+      const climbingTowardTarget = target.y - bot.entity.position.y > 0.8;
+      const movementStalled = Date.now() - lastProgressAt > 650;
+      bot.setControlState('jump', bot.entity.onGround && (climbingTowardTarget || movementStalled));
       await sleep(125);
     }
     return false;
@@ -152,6 +159,42 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
     bot.setControlState('jump', false);
     bot.setControlState('sprint', false);
   }
+}
+
+async function convergePartyClients(leader, mate) {
+  assertConnected(leader, 'before convergence');
+  assertConnected(mate, 'before convergence');
+
+  if (horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+    return true;
+  }
+
+  // Prefer moving the higher client toward the lower client. Fresh-world spawn
+  // terrain can put one bot several blocks above the other; forcing the lower bot
+  // uphill made this gate flaky even though both clients were healthy and nearby.
+  // The fallback reverses direction if local terrain still blocks the first mover.
+  const leaderHigher = leader.bot.entity.position.y >= mate.bot.entity.position.y;
+  const attempts = leaderHigher
+    ? [[leader, mate], [mate, leader]]
+    : [[mate, leader], [leader, mate]];
+
+  for (const [mover, target] of attempts) {
+    const before = horizontalDistance(leader.bot.entity.position, mate.bot.entity.position);
+    console.log(
+      `Party convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
+    );
+    const converged = await walkToward(
+      mover,
+      () => target.bot.entity?.position,
+      PARTY_CONVERGENCE_DISTANCE,
+      10_000
+    );
+    if (converged) {
+      return true;
+    }
+  }
+
+  return horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
 }
 
 async function keepNearStart(tracked, start) {
@@ -177,15 +220,10 @@ async function main() {
     await awaitSpawn(mate);
     console.log(`Party bots spawned: ${LEADER_NAME}, ${MATE_NAME} via ${BOT_VERSION} -> ViaProxy -> Paper 26.3`);
 
-    // Server spawn-radius may place two fresh players more than the encounter's
-    // 12-block party-start boundary apart. Converge using only client-authored
-    // movement; do not use RCON teleport, which would weaken the network E2E.
-    const converged = await walkToward(
-      mate,
-      () => leader.bot.entity?.position,
-      5.0,
-      12_000
-    );
+    // Fresh-world terrain can place the two clients just outside the encounter's
+    // 12-block party-start boundary. Converge using only client-authored movement;
+    // do not use RCON teleport, which would weaken the network E2E contract.
+    const converged = await convergePartyClients(leader, mate);
     if (!converged) {
       throw new Error(
         `Party clients could not converge within start boundary; distance=${horizontalDistance(
