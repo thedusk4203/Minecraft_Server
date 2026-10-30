@@ -40,9 +40,15 @@ public final class PlayerBootstrapListener implements Listener {
 
         executor.submit(() -> {
                     var identity = identities.recordSeen(minecraftUuid, playerName);
-                    return onboarding.ensureStarted(identity.playerId());
+                    boolean newlyStarted = onboarding.ensureStarted(identity.playerId());
+                    var progress = onboarding.find(identity.playerId()).orElseThrow(
+                            () -> new IllegalStateException(
+                                    "Onboarding row missing after ensureStarted for " + identity.playerId()
+                            )
+                    );
+                    return new BootstrapResult(newlyStarted, !progress.landClaimed());
                 })
-                .whenComplete((newlyStarted, failure) -> {
+                .whenComplete((result, failure) -> {
                     if (failure != null) {
                         logger.log(
                                 Level.SEVERE,
@@ -51,13 +57,13 @@ public final class PlayerBootstrapListener implements Listener {
                         );
                         return;
                     }
-                    if (Boolean.TRUE.equals(newlyStarted)) {
-                        showFirstObjective(minecraftUuid);
+                    if (result.needsLandClaim()) {
+                        showFirstObjective(minecraftUuid, result.newlyStarted());
                     }
                 });
     }
 
-    private void showFirstObjective(UUID minecraftUuid) {
+    private void showFirstObjective(UUID minecraftUuid, boolean newlyStarted) {
         if (!plugin.isEnabled()) {
             return;
         }
@@ -66,8 +72,15 @@ public final class PlayerBootstrapListener implements Listener {
             if (player == null || !player.isOnline()) {
                 return;
             }
-            player.sendMessage("§6Chào mừng! §fMục tiêu đầu tiên: bảo vệ mảnh đất của bạn.");
+            if (newlyStarted) {
+                player.sendMessage("§6Chào mừng! §fMục tiêu đầu tiên: bảo vệ mảnh đất của bạn.");
+            } else {
+                player.sendMessage("§6Mục tiêu hiện tại: §fbảo vệ mảnh đất của bạn.");
+            }
             player.sendMessage("§7Dùng xẻng vàng của GriefPrevention để tạo claim; tiến trình sẽ tự cập nhật khi claim thành công.");
         });
+    }
+
+    private record BootstrapResult(boolean newlyStarted, boolean needsLandClaim) {
     }
 }
