@@ -63,80 +63,88 @@ public final class EconomyLedger {
         try (Connection connection = database.connection()) {
             connection.setAutoCommit(false);
             try {
-                Account account = lockOrCreateAccount(connection, mutation);
-                EconomyResult existing = findExisting(connection, mutation, account.accountId());
-                if (existing != null) {
-                    connection.commit();
-                    return existing;
-                }
-
-                long newBalance;
-                try {
-                    newBalance = Math.addExact(account.balance(), mutation.delta());
-                } catch (ArithmeticException exception) {
-                    throw new EconomyException(
-                            EconomyException.Code.INVALID_MUTATION,
-                            "Economy balance overflow",
-                            exception
-                    );
-                }
-
-                if (newBalance < 0) {
-                    throw new EconomyException(
-                            EconomyException.Code.INSUFFICIENT_FUNDS,
-                            "Insufficient funds for " + mutation.currencyCode()
-                    );
-                }
-
-                UUID transactionId = UUID.randomUUID();
-                updateAccount(connection, account.accountId(), newBalance);
-                insertTransaction(connection, transactionId, account.accountId(), mutation, newBalance);
-                auditLog.append(
-                        connection,
-                        mutation.playerId(),
-                        "economy.balance_changed",
-                        mutation.correlationId(),
-                        "economy:" + mutation.idempotencyKey(),
-                        auditPayload(transactionId, mutation, newBalance)
-                );
+                EconomyResult result = applyInTransaction(connection, mutation);
                 connection.commit();
-
-                return new EconomyResult(
-                        transactionId,
-                        account.accountId(),
-                        mutation.delta(),
-                        newBalance,
-                        mutation.reason(),
-                        mutation.correlationId(),
-                        false
-                );
+                return result;
             } catch (EconomyException exception) {
                 rollbackQuietly(connection);
                 throw exception;
             } catch (SQLException exception) {
                 rollbackQuietly(connection);
-                if ("23505".equals(exception.getSQLState())) {
-                    throw new EconomyException(
-                            EconomyException.Code.IDEMPOTENCY_CONFLICT,
-                            "Economy idempotency key already belongs to another mutation",
-                            exception
-                    );
-                }
-                throw new EconomyException(
-                        EconomyException.Code.STORAGE_FAILURE,
-                        "Failed to apply economy mutation",
-                        exception
-                );
+                throw storageFailure("Failed to commit economy mutation", exception);
             } catch (RuntimeException exception) {
                 rollbackQuietly(connection);
                 throw exception;
             }
         } catch (SQLException exception) {
-            throw new EconomyException(
-                    EconomyException.Code.STORAGE_FAILURE,
-                    "Failed to acquire economy database connection",
-                    exception
+            throw storageFailure("Failed to acquire economy database connection", exception);
+        }
+    }
+
+    /**
+     * Applies a mutation using a transaction owned by the caller. This method never commits or rolls back
+     * the supplied connection, allowing a domain workflow to make the ledger entry and its related durable
+     * milestone atomic.
+     */
+    public EconomyResult applyInTransaction(Connection connection, EconomyMutation mutation) {
+        Objects.requireNonNull(connection, "connection");
+        Objects.requireNonNull(mutation, "mutation");
+
+        try {
+            Account account = lockOrCreateAccount(connection, mutation);
+            EconomyResult existing = findExisting(connection, mutation, account.accountId());
+            if (existing != null) {
+                return existing;
+            }
+
+            long newBalance;
+            try {
+                newBalance = Math.addExact(account.balance(), mutation.delta());
+            } catch (ArithmeticException exception) {
+                throw new EconomyException(
+                        EconomyException.Code.INVALID_MUTATION,
+                        "Economy balance overflow",
+                        exception
+                );
+            }
+
+            if (newBalance < 0) {
+                throw new EconomyException(
+                        EconomyException.Code.INSUFFICIENT_FUNDS,
+                        "Insufficient funds for " + mutation.currencyCode()
+                );
+            }
+
+            UUID transactionId = UUID.randomUUID();
+            updateAccount(connection, account.accountId(), newBalance);
+            insertTransaction(connection, transactionId, account.accountId(), mutation, newBalance);
+            auditLog.append(
+                    connection,
+                    mutation.playerId(),
+                    "economy.balance_changed",
+                    mutation.correlationId(),
+                    "economy:" + mutation.idempotencyKey(),
+                    auditPayload(transactionId, mutation, newBalance)
             );
+
+            return new EconomyResult(
+                    transactionId,
+                    account.accountId(),
+                    mutation.delta(),
+                    newBalance,
+                    mutation.reason(),
+                    mutation.correlationId(),
+                    false
+            );
+        } catch (SQLException exception) {
+            if ("23505".equals(exception.getSQLState())) {
+                throw new EconomyException(
+                        EconomyException.Code.IDEMPOTENCY_CONFLICT,
+                        "Economy idempotency key already belongs to another mutation",
+                        exception
+                );
+            }
+            throw storageFailure("Failed to apply economy mutation", exception);
         }
     }
 
@@ -152,11 +160,7 @@ public final class EconomyLedger {
                 return result.next() ? result.getLong("balance") : 0L;
             }
         } catch (SQLException exception) {
-            throw new EconomyException(
-                    EconomyException.Code.STORAGE_FAILURE,
-                    "Failed to read economy balance",
-                    exception
-            );
+            throw storageFailure("Failed to read economy balance", exception);
         }
     }
 
@@ -256,6 +260,10 @@ public final class EconomyLedger {
                 + "\",\"currency\":\"" + mutation.currencyCode()
                 + "\",\"delta\":" + mutation.delta()
                 + ",\"balanceAfter\":" + newBalance + "}";
+    }
+
+    private static EconomyException storageFailure(String message, SQLException exception) {
+        return new EconomyException(EconomyException.Code.STORAGE_FAILURE, message, exception);
     }
 
     private static void rollbackQuietly(Connection connection) {
