@@ -62,7 +62,7 @@ public final class FirstSkillCurrencyService {
                 }
 
                 boolean currencyGranted = false;
-                long balanceAfter = economy.balance(playerId, CURRENCY_CODE);
+                long balanceAfter = -1L;
                 if (!progress.firstCurrencyEarned()) {
                     EconomyResult economyResult = economy.applyInTransaction(
                             connection,
@@ -78,7 +78,7 @@ public final class FirstSkillCurrencyService {
                             )
                     );
                     if (!onboarding.markFirstCurrencyEarned(connection, playerId)) {
-                        throw new PersistenceException(
+                        throw new IllegalStateException(
                                 "First-currency milestone changed unexpectedly for player " + playerId
                         );
                     }
