@@ -27,7 +27,6 @@ services:
       ENABLE_RCON: "TRUE"
       RCON_PASSWORD: "${RCON_PASSWORD:?Run the dev-up script to generate .env first}"
       PAPER_VELOCITY_SECRET: "${FORWARDING_SECRET:?Run the dev-up script to generate .env first}"
-      PLUGINS: "/plugins"
     expose:
       - "25565"
     volumes:
