@@ -1,5 +1,7 @@
 package dev.thedusk.minecraftserver;
 
+import dev.thedusk.minecraftserver.admin.AdminCommandHandler;
+import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityListener;
@@ -24,13 +26,16 @@ public final class MinecraftServerCore extends JavaPlugin {
             database = DatabaseManager.open(DatabaseSettings.fromEnvironment(System.getenv()));
             persistenceExecutor = new PersistenceExecutor();
             identities = new PlayerIdentityRepository(database);
-            economy = new EconomyLedger(database, new AuditLog());
+
+            AuditLog auditLog = new AuditLog();
+            economy = new EconomyLedger(database, auditLog);
+            AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
 
             getServer().getPluginManager().registerEvents(
                     new PlayerIdentityListener(identities, persistenceExecutor, getLogger()),
                     this
             );
-            configureAdminCommand();
+            configureAdminCommand(diagnostics);
 
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
@@ -44,36 +49,18 @@ public final class MinecraftServerCore extends JavaPlugin {
         }
     }
 
-    private void configureAdminCommand() {
+    private void configureAdminCommand(AdminDiagnosticsService diagnostics) {
         PluginCommand command = Objects.requireNonNull(
                 getCommand("mcserver"),
                 "mcserver command must be declared in plugin.yml"
         );
 
-        command.setExecutor((sender, ignoredCommand, ignoredLabel, args) -> {
-            if (args.length == 1 && args[0].equalsIgnoreCase("health")) {
-                DatabaseManager activeDatabase = database;
-                boolean databaseHealthy = activeDatabase != null && activeDatabase.isHealthy();
-                String pool = activeDatabase == null
-                        ? "closed"
-                        : activeDatabase.activeConnections() + "/" + activeDatabase.idleConnections();
-
-                sender.sendMessage(
-                        "MinecraftServerCore OK | Minecraft "
-                                + getServer().getMinecraftVersion()
-                                + " | players="
-                                + getServer().getOnlinePlayers().size()
-                                + " | db="
-                                + (databaseHealthy ? "UP" : "DOWN")
-                                + " | pool(active/idle)="
-                                + pool
-                );
-                return true;
-            }
-
-            sender.sendMessage("Usage: /mcserver health");
-            return true;
-        });
+        command.setExecutor(new AdminCommandHandler(
+                this,
+                database,
+                persistenceExecutor,
+                diagnostics
+        ));
     }
 
     @Override
