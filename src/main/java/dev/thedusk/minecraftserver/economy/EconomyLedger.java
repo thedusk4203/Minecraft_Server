@@ -16,6 +16,17 @@ public final class EconomyLedger {
             ON CONFLICT (player_id, currency_code) DO NOTHING
             """;
 
+    private static final String CREATE_TRANSFER_ACCOUNTS_SQL = """
+            INSERT INTO economy_account (account_id, player_id, currency_code, balance, version)
+            SELECT account_id, player_id, currency_code, 0, 0
+            FROM (VALUES
+                (?, ?, ?),
+                (?, ?, ?)
+            ) AS candidates(account_id, player_id, currency_code)
+            ORDER BY player_id
+            ON CONFLICT (player_id, currency_code) DO NOTHING
+            """;
+
     private static final String LOCK_ACCOUNT_SQL = """
             SELECT account_id, balance
             FROM economy_account
@@ -140,9 +151,9 @@ public final class EconomyLedger {
     }
 
     /**
-     * Transfers currency between two player accounts in a transaction owned by the caller. Both account rows
-     * are locked in deterministic player UUID order so opposite-direction transfers cannot create a lock-order
-     * cycle. The debit, credit and audit entries are committed or rolled back together by the caller.
+     * Transfers currency between two player accounts in a transaction owned by the caller. Account creation
+     * and row locking both use PostgreSQL player UUID ordering so opposite-direction transfers cannot create
+     * a lock-order cycle. The debit, credit and audit entries are committed or rolled back together by the caller.
      */
     public EconomyTransferResult transferInTransaction(Connection connection, EconomyTransfer transfer) {
         Objects.requireNonNull(connection, "connection");
@@ -150,8 +161,7 @@ public final class EconomyLedger {
 
         try {
             requireCallerOwnedTransaction(connection, "transferInTransaction");
-            ensureAccount(connection, transfer.fromPlayerId(), transfer.currencyCode());
-            ensureAccount(connection, transfer.toPlayerId(), transfer.currencyCode());
+            ensureTransferAccounts(connection, transfer);
             TransferAccounts accounts = lockTransferAccounts(connection, transfer);
 
             EconomyMutation debit = new EconomyMutation(
@@ -275,6 +285,18 @@ public final class EconomyLedger {
             statement.setObject(1, UUID.randomUUID());
             statement.setObject(2, playerId);
             statement.setString(3, currencyCode);
+            statement.executeUpdate();
+        }
+    }
+
+    private void ensureTransferAccounts(Connection connection, EconomyTransfer transfer) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(CREATE_TRANSFER_ACCOUNTS_SQL)) {
+            statement.setObject(1, UUID.randomUUID());
+            statement.setObject(2, transfer.fromPlayerId());
+            statement.setString(3, transfer.currencyCode());
+            statement.setObject(4, UUID.randomUUID());
+            statement.setObject(5, transfer.toPlayerId());
+            statement.setString(6, transfer.currencyCode());
             statement.executeUpdate();
         }
     }
