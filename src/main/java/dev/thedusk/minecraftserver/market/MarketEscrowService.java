@@ -2,13 +2,10 @@ package dev.thedusk.minecraftserver.market;
 
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -74,9 +71,12 @@ public final class MarketEscrowService {
         try {
             payload = codec.serialize(marked);
             sha256 = codec.sha256(payload);
+            // PREPARED may only become durable after the escrow marker itself is durable in playerdata.
+            player.saveData();
         } catch (RuntimeException exception) {
             player.getInventory().setItemInMainHand(codec.strip(marked));
-            logger.log(Level.SEVERE, "Failed to serialize market item for " + minecraftUuid, exception);
+            bestEffortSave(player, "rollback escrow marker after serialization/save failure");
+            logger.log(Level.SEVERE, "Failed to durably mark market item for " + minecraftUuid, exception);
             player.sendMessage("§cKhông thể chuẩn bị vật phẩm để bán.");
             return;
         }
@@ -127,7 +127,7 @@ public final class MarketEscrowService {
                         current.sendMessage("§7Market chưa có listing nào.");
                         return;
                     }
-                    current.sendMessage("§6Market §7(20 listing mới nhất theo thứ tự ID):");
+                    current.sendMessage("§6Market §7(tối đa 20 listing đang mở):");
                     for (MarketListing listing : active) {
                         current.sendMessage("§e#" + listing.listingNumber()
                                 + " §f" + listing.itemAmount() + "x " + listing.materialKey()
@@ -150,7 +150,7 @@ public final class MarketEscrowService {
                 .whenComplete((listing, failure) -> {
                     if (failure != null) {
                         logger.log(Level.WARNING, "Failed to request market listing cancellation #" + listingNumber, failure);
-                        reconcileCancellationRequest(minecraftUuid, listingNumber);
+                        reconcileCancellationRequest(minecraftUuid, playerName, listingNumber);
                         return;
                     }
                     scheduleMain(() -> deliverReturn(minecraftUuid, listing));
@@ -190,7 +190,9 @@ public final class MarketEscrowService {
                         scheduleMain(() -> {
                             Player player = plugin.getServer().getPlayer(minecraftUuid);
                             if (player != null && player.isOnline()) {
-                                stripToken(player.getInventory(), escrowToken);
+                                if (stripToken(player.getInventory(), escrowToken) > 0) {
+                                    bestEffortSave(player, "unlock failed market preparation");
+                                }
                                 player.sendMessage("§cKhông tạo được listing; vật phẩm đã được mở khóa.");
                             }
                         });
@@ -204,7 +206,9 @@ public final class MarketEscrowService {
             return;
         }
         if (listing.status() == MarketListingStatus.LISTED) {
-            removeToken(player.getInventory(), listing.escrowToken());
+            if (removeToken(player.getInventory(), listing.escrowToken()) > 0) {
+                bestEffortSave(player, "remove duplicate item for listed escrow");
+            }
             player.sendMessage("§aListing #" + listing.listingNumber() + " đã sẵn sàng trên market.");
             return;
         }
@@ -212,10 +216,12 @@ public final class MarketEscrowService {
             return;
         }
 
-        int removed = removeToken(player.getInventory(), listing.escrowToken());
-        if (removed == 0) {
-            logger.warning("Prepared market token was absent from online seller inventory: " + listing.escrowToken());
+        removeToken(player.getInventory(), listing.escrowToken());
+        if (!saveForStateTransition(player, "persist escrow removal before listing activation")) {
+            player.sendMessage("§eKhông thể ghi bền vững inventory; listing vẫn ở PREPARED. Dùng /market recover sau.");
+            return;
         }
+
         executor.submit(() -> listings.activatePrepared(listing.listingId(), listing.sellerPlayerId()))
                 .whenComplete((activated, failure) -> scheduleMain(() -> {
                     Player current = plugin.getServer().getPlayer(minecraftUuid);
@@ -233,19 +239,29 @@ public final class MarketEscrowService {
                 }));
     }
 
-    private void reconcileCancellationRequest(UUID minecraftUuid, long listingNumber) {
-        executor.submit(() -> listings.findByNumber(listingNumber))
-                .whenComplete((existing, lookupFailure) -> {
+    private void reconcileCancellationRequest(UUID minecraftUuid, String playerName, long listingNumber) {
+        executor.submit(() -> {
+                    var identity = identities.recordSeen(minecraftUuid, playerName);
+                    return new CancellationReconciliation(
+                            identity.playerId(),
+                            listings.findByNumber(listingNumber).orElse(null)
+                    );
+                })
+                .whenComplete((reconciliation, lookupFailure) -> {
                     if (lookupFailure != null) {
                         logger.log(Level.WARNING, "Could not reconcile cancellation request #" + listingNumber, lookupFailure);
                         scheduleMain(() -> sendIfOnline(minecraftUuid, "§eKhông xác định được trạng thái cancel; dùng /market recover."));
                         return;
                     }
-                    if (existing.isEmpty()) {
+                    MarketListing listing = reconciliation.listing();
+                    if (listing == null) {
                         scheduleMain(() -> sendIfOnline(minecraftUuid, "§cKhông tìm thấy listing #" + listingNumber + "."));
                         return;
                     }
-                    MarketListing listing = existing.orElseThrow();
+                    if (!listing.sellerPlayerId().equals(reconciliation.requestingPlayerId())) {
+                        scheduleMain(() -> sendIfOnline(minecraftUuid, "§cListing #" + listingNumber + " không thuộc về bạn."));
+                        return;
+                    }
                     if (listing.status() == MarketListingStatus.RETURN_PENDING
                             || listing.status() == MarketListingStatus.CANCELLED) {
                         scheduleMain(() -> deliverReturn(minecraftUuid, listing));
@@ -261,7 +277,9 @@ public final class MarketEscrowService {
             return;
         }
         if (listing.status() == MarketListingStatus.CANCELLED) {
-            stripToken(player.getInventory(), listing.escrowToken());
+            if (stripToken(player.getInventory(), listing.escrowToken()) > 0) {
+                bestEffortSave(player, "strip recovered cancelled-listing marker");
+            }
             player.sendMessage("§7Listing #" + listing.listingNumber() + " đã được hủy.");
             return;
         }
@@ -297,6 +315,12 @@ public final class MarketEscrowService {
             inventory.setItem(emptySlot, restored);
         }
 
+        // A terminal DB cancellation is only allowed after the returned marked item is durable in playerdata.
+        if (!saveForStateTransition(player, "persist returned escrow item before cancellation acknowledgement")) {
+            player.sendMessage("§eKhông thể ghi bền vững item đã trả; listing vẫn RETURN_PENDING. Dùng /market recover sau.");
+            return;
+        }
+
         executor.submit(() -> listings.completeCancel(listing.listingId(), listing.sellerPlayerId()))
                 .whenComplete((cancelled, failure) -> scheduleMain(() -> {
                     Player current = plugin.getServer().getPlayer(minecraftUuid);
@@ -308,7 +332,9 @@ public final class MarketEscrowService {
                         return;
                     }
                     if (current != null && current.isOnline()) {
-                        stripToken(current.getInventory(), cancelled.escrowToken());
+                        if (stripToken(current.getInventory(), cancelled.escrowToken()) > 0) {
+                            bestEffortSave(current, "persist stripped marker after cancellation acknowledgement");
+                        }
                         current.sendMessage("§aĐã hủy listing #" + cancelled.listingNumber() + " và trả item.");
                     }
                 }));
@@ -317,7 +343,7 @@ public final class MarketEscrowService {
     private RecoveryPlan buildRecoveryPlan(UUID minecraftUuid, String playerName, Set<UUID> inventoryTokens) {
         var identity = identities.recordSeen(minecraftUuid, playerName);
         List<MarketListing> open = listings.findOpenBySeller(identity.playerId());
-        Map<UUID, MarketListing> byToken = new HashMap<>();
+        var byToken = new java.util.HashMap<UUID, MarketListing>();
         for (MarketListing listing : open) {
             byToken.put(listing.escrowToken(), listing);
         }
@@ -326,7 +352,7 @@ public final class MarketEscrowService {
                 listings.findByEscrowToken(token).ifPresent(listing -> byToken.put(token, listing));
             }
         }
-        return new RecoveryPlan(identity.playerId(), List.copyOf(open), Map.copyOf(byToken));
+        return new RecoveryPlan(identity.playerId(), open, byToken);
     }
 
     private void applyRecoveryPlan(UUID minecraftUuid, RecoveryPlan plan) {
@@ -336,20 +362,26 @@ public final class MarketEscrowService {
         }
         PlayerInventory inventory = player.getInventory();
         Set<UUID> inventoryTokens = collectMarkedTokens(inventory);
+        boolean changed = false;
 
         for (UUID token : inventoryTokens) {
             MarketListing listing = plan.byToken().get(token);
             if (listing == null) {
-                stripToken(inventory, token);
+                changed |= stripToken(inventory, token) > 0;
                 continue;
             }
             switch (listing.status()) {
-                case PREPARED, LISTED -> removeToken(inventory, token);
-                case RETURN_PENDING -> {
-                    // Keep the marked returned item in inventory until the DB acknowledgement commits.
+                case PREPARED, RETURN_PENDING -> {
+                    // PREPARED is finalized below; RETURN_PENDING is delivered/acknowledged below.
                 }
-                case CANCELLED -> stripToken(inventory, token);
+                case LISTED -> changed |= removeToken(inventory, token) > 0;
+                case CANCELLED -> changed |= stripToken(inventory, token) > 0;
             }
+        }
+
+        if (changed && !saveForStateTransition(player, "persist market recovery inventory cleanup")) {
+            player.sendMessage("§eKhông thể ghi bền vững market recovery; sẽ thử lại lần sau.");
+            return;
         }
 
         for (MarketListing listing : plan.openListings()) {
@@ -357,7 +389,7 @@ public final class MarketEscrowService {
                 case PREPARED -> finalizePreparedEscrow(minecraftUuid, listing);
                 case RETURN_PENDING -> deliverReturn(minecraftUuid, listing);
                 case LISTED, CANCELLED -> {
-                    // No recovery action required.
+                    // No additional transition required.
                 }
             }
         }
@@ -404,6 +436,22 @@ public final class MarketEscrowService {
         return changed;
     }
 
+    private boolean saveForStateTransition(Player player, String operation) {
+        try {
+            player.saveData();
+            return true;
+        } catch (RuntimeException exception) {
+            logger.log(Level.SEVERE, "Failed to " + operation + " for " + player.getUniqueId(), exception);
+            return false;
+        }
+    }
+
+    private void bestEffortSave(Player player, String operation) {
+        if (!saveForStateTransition(player, operation)) {
+            logger.warning("Market inventory state will require later recovery for " + player.getUniqueId());
+        }
+    }
+
     private void sendIfOnline(UUID minecraftUuid, String message) {
         Player player = plugin.getServer().getPlayer(minecraftUuid);
         if (player != null && player.isOnline()) {
@@ -418,6 +466,12 @@ public final class MarketEscrowService {
         plugin.getServer().getScheduler().runTask(plugin, task);
     }
 
+    private record CancellationReconciliation(UUID requestingPlayerId, MarketListing listing) {
+        private CancellationReconciliation {
+            Objects.requireNonNull(requestingPlayerId, "requestingPlayerId");
+        }
+    }
+
     private record RecoveryPlan(
             UUID sellerPlayerId,
             List<MarketListing> openListings,
@@ -425,8 +479,8 @@ public final class MarketEscrowService {
     ) {
         private RecoveryPlan {
             Objects.requireNonNull(sellerPlayerId, "sellerPlayerId");
-            openListings = new ArrayList<>(openListings);
-            byToken = new HashMap<>(byToken);
+            openListings = List.copyOf(openListings);
+            byToken = Map.copyOf(byToken);
         }
     }
 }
