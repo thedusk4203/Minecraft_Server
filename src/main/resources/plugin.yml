@@ -15,6 +15,10 @@ commands:
     description: Durable player market escrow commands.
     usage: /market <sell|list|cancel|recover>
     permission: minecraftserver.market
+  boss:
+    description: Start or inspect the Stone Warden encounter.
+    usage: /boss <start [player...]|status>
+    permission: minecraftserver.boss
 
 permissions:
   minecraftserver.admin:
@@ -22,4 +26,7 @@ permissions:
     default: op
   minecraftserver.market:
     description: Allows players to use the server market.
+    default: true
+  minecraftserver.boss:
+    description: Allows players to start and inspect the first PvE boss encounter.
     default: true
