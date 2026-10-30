@@ -75,15 +75,18 @@ public final class StoneWardenRewardService {
             """;
 
     private static final String FIND_RECONCILABLE_RUNS_SQL = """
-            SELECT DISTINCT reward.run_id
-            FROM encounter_reward reward
-            JOIN encounter_run run ON run.run_id = reward.run_id
-            WHERE reward.status = 'PENDING'
-              AND reward.reward_key = ?
-              AND reward.reward_version = ?
-              AND run.encounter_id = ?
+            SELECT run.run_id
+            FROM encounter_run run
+            LEFT JOIN encounter_reward reward
+              ON reward.run_id = run.run_id
+             AND reward.reward_key = ?
+             AND reward.reward_version = ?
+            WHERE run.encounter_id = ?
               AND run.status = 'COMPLETED'
-            ORDER BY reward.run_id
+            GROUP BY run.run_id, run.ended_at
+            HAVING COUNT(reward.reward_id) = 0
+                OR BOOL_OR(reward.status = 'PENDING')
+            ORDER BY run.ended_at, run.run_id
             LIMIT 1000
             """;
 
@@ -118,31 +121,12 @@ public final class StoneWardenRewardService {
                     throw semanticConflict("Encounter participant set changed before reward preparation");
                 }
 
-                int newlyPrepared = 0;
-                for (UUID playerId : participants) {
-                    UUID proposedRewardId = UUID.randomUUID();
-                    UUID insertedRewardId = insertReward(
-                            connection,
-                            proposedRewardId,
-                            run.runId(),
-                            playerId
-                    );
-                    if (insertedRewardId != null) {
-                        newlyPrepared++;
-                        auditLog.append(
-                                connection,
-                                playerId,
-                                "encounter.reward_prepared",
-                                correlationId,
-                                prepareAuditKey(insertedRewardId),
-                                rewardPayload(insertedRewardId, run.runId(), playerId, null)
-                        );
-                    } else {
-                        RewardRow existing = requireRewardByIdentity(connection, run.runId(), playerId);
-                        validateRewardSemantics(existing, run.runId(), playerId);
-                    }
-                }
-
+                int newlyPrepared = ensureRewardIntents(
+                        connection,
+                        run.runId(),
+                        participants,
+                        correlationId
+                );
                 connection.commit();
                 return newlyPrepared;
             } catch (EncounterRewardException exception) {
@@ -176,6 +160,11 @@ public final class StoneWardenRewardService {
                 }
 
                 List<UUID> participants = participants(connection, runId);
+                if (participants.isEmpty()) {
+                    throw semanticConflict("Completed reward run has no participants: " + runId);
+                }
+                ensureRewardIntents(connection, runId, participants, correlationId);
+
                 List<RewardRow> rewards = lockRewards(connection, runId);
                 validateRewardCoverage(runId, participants, rewards);
 
@@ -271,6 +260,34 @@ public final class StoneWardenRewardService {
         } catch (SQLException exception) {
             throw storageFailure("Failed to query pending completed rewards", exception);
         }
+    }
+
+    private int ensureRewardIntents(
+            Connection connection,
+            UUID runId,
+            List<UUID> participants,
+            UUID correlationId
+    ) throws SQLException {
+        int newlyPrepared = 0;
+        for (UUID playerId : participants) {
+            UUID proposedRewardId = UUID.randomUUID();
+            UUID insertedRewardId = insertReward(connection, proposedRewardId, runId, playerId);
+            if (insertedRewardId != null) {
+                newlyPrepared++;
+                auditLog.append(
+                        connection,
+                        playerId,
+                        "encounter.reward_prepared",
+                        correlationId,
+                        prepareAuditKey(insertedRewardId),
+                        rewardPayload(insertedRewardId, runId, playerId, null)
+                );
+            } else {
+                RewardRow existing = requireRewardByIdentity(connection, runId, playerId);
+                validateRewardSemantics(existing, runId, playerId);
+            }
+        }
+        return newlyPrepared;
     }
 
     private static RunState lockRun(Connection connection, UUID runId) throws SQLException {
@@ -466,7 +483,11 @@ public final class StoneWardenRewardService {
 
     private static EncounterRewardException storageFailure(String message, SQLException exception) {
         if ("23505".equals(exception.getSQLState())) {
-            return semanticConflict("Encounter reward uniqueness invariant was violated");
+            return new EncounterRewardException(
+                    EncounterRewardException.Code.SEMANTIC_CONFLICT,
+                    "Encounter reward uniqueness invariant was violated",
+                    exception
+            );
         }
         return new EncounterRewardException(
                 EncounterRewardException.Code.STORAGE_FAILURE,
