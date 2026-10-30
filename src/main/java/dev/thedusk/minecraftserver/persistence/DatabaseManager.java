@@ -11,6 +11,7 @@ import org.flywaydb.core.Flyway;
 public final class DatabaseManager implements AutoCloseable {
     private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration VALIDATION_TIMEOUT = Duration.ofSeconds(2);
+    private static final String POSTGRES_DRIVER = "org.postgresql.Driver";
 
     private final HikariDataSource dataSource;
 
@@ -23,6 +24,7 @@ public final class DatabaseManager implements AutoCloseable {
 
         HikariConfig config = new HikariConfig();
         config.setPoolName("minecraft-server-db");
+        config.setDriverClassName(POSTGRES_DRIVER);
         config.setJdbcUrl(settings.jdbcUrl());
         config.setUsername(settings.username());
         config.setPassword(settings.password());
