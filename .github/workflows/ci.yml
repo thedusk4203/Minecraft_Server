@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       FORWARDING_SECRET: ci-forwarding-secret-ephemeral-only
       POSTGRES_PASSWORD: ci-postgres-password-ephemeral-only
@@ -40,8 +40,11 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
-      - name: Build core plugin
+      - name: Build core plugin and unit tests
         run: gradle clean build --no-daemon
+
+      - name: Run PostgreSQL integration tests
+        run: gradle integrationTest --no-daemon
 
       - name: Start local stack
         run: docker compose up -d --wait --wait-timeout 300
@@ -49,8 +52,11 @@ jobs:
       - name: Check PostgreSQL
         run: docker compose exec -T postgres pg_isready -U minecraft -d minecraft
 
-      - name: Check Paper core plugin
-        run: docker compose exec -T paper rcon-cli "mcserver health"
+      - name: Check Paper core plugin and database
+        run: |
+          health="$(docker compose exec -T paper rcon-cli 'mcserver health')"
+          echo "$health"
+          echo "$health" | grep -q 'db=UP'
 
       - name: Check crossplay proxy plugins
         run: |
@@ -65,7 +71,7 @@ jobs:
 
       - name: Show service logs on failure
         if: failure()
-        run: docker compose logs --tail=200
+        run: docker compose logs --tail=250
 
       - name: Stop local stack
         if: always()

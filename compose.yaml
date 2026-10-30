@@ -27,6 +27,12 @@ services:
       ENABLE_RCON: "TRUE"
       RCON_PASSWORD: "${RCON_PASSWORD:?Run the dev-up script to generate .env first}"
       PAPER_VELOCITY_SECRET: "${FORWARDING_SECRET:?Run the dev-up script to generate .env first}"
+      DATABASE_HOST: "postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "minecraft"
+      DATABASE_USER: "minecraft"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Run the dev-up script to generate .env first}"
+      DATABASE_POOL_SIZE: "10"
     expose:
       - "25565"
     volumes:
