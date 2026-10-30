@@ -3,6 +3,28 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
+function New-HexSecret([int] $ByteCount) {
+    $bytes = New-Object byte[] $ByteCount
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($bytes)
+    }
+    finally {
+        $rng.Dispose()
+    }
+    return ([BitConverter]::ToString($bytes)).Replace("-", "").ToLowerInvariant()
+}
+
+if (-not (Test-Path ".env")) {
+    Write-Host "Generating local-only credentials in .env..."
+    $envContent = @(
+        "FORWARDING_SECRET=$(New-HexSecret 32)",
+        "POSTGRES_PASSWORD=$(New-HexSecret 24)",
+        "RCON_PASSWORD=$(New-HexSecret 24)"
+    ) -join "`n"
+    Set-Content -Path ".env" -Value $envContent -Encoding Ascii
+}
+
 Write-Host "[1/3] Checking Docker..."
 docker info | Out-Null
 
