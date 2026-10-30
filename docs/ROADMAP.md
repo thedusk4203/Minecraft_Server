@@ -167,7 +167,7 @@ Receipt:
 - Merge-state CI `41017540269` succeeded.
 
 ## Phase 4 — PvE content
-Status: next
+Status: in progress
 
 Deliverables:
 - Encounter framework
@@ -180,7 +180,7 @@ Exit gate:
 - A small party can complete the full PvE loop repeatedly without duplication/data-loss bugs.
 
 ### Phase 4A — Encounter Runtime Foundation
-Status: next
+Status: complete / frozen
 
 Scope:
 - data-driven encounter definition validation
@@ -191,20 +191,64 @@ Scope:
 - audit/diagnostic visibility
 - deterministic lifecycle/idempotency tests
 
-Non-goals for 4A:
-- first boss mechanics
-- dungeon layout/content
-- reward economy or loot delivery
-- matchmaking/party system expansion
-- complex GUI tooling
+Exit gate met:
+- the synthetic `framework_probe` definition loads and validates deterministically;
+- a durable run records encounter ID/version/fingerprint and canonical participants;
+- exact start replay returns the existing run while semantic correlation reuse fails closed;
+- conflicting terminal outcomes serialize and cannot both commit;
+- lifecycle state and audit events share transaction boundaries and roll back together under injected failure;
+- restart explicitly abandons stale `ACTIVE` runs with `SERVER_RESTART` before gameplay initialization completes;
+- run/participant diagnostics are queryable;
+- the shaded runtime JAR is checked for migration and encounter-definition resources;
+- Paper/Flyway full-stack boot, existing gameplay dependencies, market wiring and crossplay smoke remain green.
+
+Receipt:
+- PR #10 merged at `f2f2d8704bb0cbfb542b0b04f64827e69f0b224c`.
+- Final head `eeb21e40b95898ac44baf19cb4f3512c25571c91`.
+- Final-head CI `41020474477` succeeded.
+- Freeze receipt: `docs/PHASE4A_FREEZE.md`.
+
+### Phase 4B — First Boss Combat Vertical Slice
+Status: next
+
+Scope:
+- one data-driven boss definition consuming the frozen 4A runtime
+- server-owned spawn/despawn and encounter-zone lifecycle
+- participant eligibility bound to one durable encounter run
+- clear player-readable telegraphs
+- at least two mechanics beyond basic melee
+- explicit anti-cheese boundaries
+- death, disconnect, timeout and wipe/failure behavior
+- clean reset/despawn behavior
+- telemetry for attempts, participant deaths, duration and terminal outcome
+
+Non-goals for 4B:
+- durable loot/economy reward delivery
+- first dungeon layout/content
+- matchmaking or party-system expansion
+- advanced boss authoring GUI
+- broad content catalog
 
 Exit gate:
-- one synthetic encounter definition can start and terminate a durable run deterministically;
-- invalid definitions fail startup/validation closed;
-- duplicate/replayed lifecycle commands cannot create conflicting terminal outcomes;
-- restart preserves unresolved run state and recovery semantics are explicit;
-- run/participant telemetry is queryable and auditable;
-- existing Phase 1–3 integration and full-stack smoke tests remain green.
+- a small party can start the first boss from a validated definition and the world entity lifecycle is bound to exactly one durable encounter run;
+- boss completion, wipe/failure, timeout and participant-loss paths converge on an explicit terminal run outcome;
+- server restart cannot leave a boss entity treated as a live resumable run;
+- at least two mechanics have readable telegraphs and deterministic state-machine boundaries;
+- arena/zone rules block obvious trivial cheese without relying on staff intervention;
+- repeated cleanup/despawn is safe and does not produce conflicting terminal outcomes;
+- attempt/death/duration/outcome telemetry is observable;
+- no reward is granted yet, so combat correctness can be reviewed independently from anti-duplication reward delivery;
+- existing Phase 1–4A integration and full-stack smoke tests remain green.
+
+### Phase 4C — Boss Reward Delivery
+Status: planned
+
+Scope direction:
+- deterministic reward eligibility derived from a completed boss run;
+- durable reward intent/history;
+- retry-safe item/currency delivery with explicit anti-duplication boundaries;
+- reward telemetry and audit;
+- no dungeon expansion until reward delivery is proven.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -271,16 +315,17 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Implement **Phase 4A — Encounter Runtime Foundation** as a separate reviewable change-set.
+Implement **Phase 4B — First Boss Combat Vertical Slice** as a separate reviewable change-set consuming the frozen 4A encounter runtime.
 
 Acceptance checklist:
-- introduce versioned persistence only for durable encounter-run state that truly needs PostgreSQL;
-- define and validate a minimal data-driven encounter schema;
-- create a stable encounter/run identity model;
-- model explicit non-terminal and terminal lifecycle states without ambiguous replay;
-- persist participants and timestamps needed for later multi-player telemetry;
-- define restart behavior for unresolved runs;
-- expose enough diagnostics/audit data to investigate a stuck or conflicting run;
-- add PostgreSQL integration tests for start/replay/terminal transition/restart/concurrency invariants;
-- do not add boss rewards before run lifecycle correctness is proven;
-- keep all existing onboarding/economy/market/crossplay tests green.
+- add exactly one validated boss definition rather than a generic boss catalog;
+- bridge boss spawn/despawn to one durable `encounter_run` identity;
+- define explicit boss runtime states and permitted transitions;
+- define arena/encounter-zone entry, boundary and cleanup rules;
+- implement clear telegraphs and at least two mechanics beyond basic melee;
+- define participant death, disconnect, wipe and timeout semantics;
+- make terminalization idempotent under duplicate cleanup/events;
+- record attempt/death/duration/outcome telemetry without inventing reward state;
+- add deterministic unit/integration tests for state-machine and cleanup boundaries where Paper APIs permit;
+- add full-stack smoke proving the boss runtime loads without regressing Phase 1–4A systems;
+- do not implement loot/currency rewards until Phase 4C.
