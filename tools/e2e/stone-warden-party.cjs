@@ -11,6 +11,7 @@ const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const ATTACK_REACH = 3.6;
+const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,33 +91,34 @@ function createTrackedBot(username) {
   });
 
   return {
+    username,
     bot,
     kicked: () => kickedReason
   };
 }
 
 async function awaitSpawn(tracked) {
-  const { bot } = tracked;
+  const { bot, username } = tracked;
   await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`${bot.username} did not spawn within 30 seconds`)), 30_000);
+    const timeout = setTimeout(() => reject(new Error(`${username} did not spawn within 30 seconds`)), 30_000);
     bot.once('spawn', () => {
       clearTimeout(timeout);
       resolve();
     });
     bot.once('end', (reason) => {
       clearTimeout(timeout);
-      reject(new Error(`${bot.username} connection ended before spawn: ${reason}`));
+      reject(new Error(`${username} connection ended before spawn: ${reason}`));
     });
   });
 }
 
 function assertConnected(tracked, context) {
-  const { bot, kicked } = tracked;
+  const { bot, kicked, username } = tracked;
   if (kicked()) {
-    throw new Error(`${bot.username} was kicked ${context}: ${JSON.stringify(kicked())}`);
+    throw new Error(`${username} was kicked ${context}: ${JSON.stringify(kicked())}`);
   }
   if (!bot.entity) {
-    throw new Error(`${bot.username} entity disappeared ${context}`);
+    throw new Error(`${username} entity disappeared ${context}`);
   }
 }
 
@@ -164,11 +166,40 @@ async function keepNearStart(tracked, start) {
 
 async function main() {
   const leader = createTrackedBot(LEADER_NAME);
-  const mate = createTrackedBot(MATE_NAME);
+  let mate = null;
 
   try {
-    await Promise.all([awaitSpawn(leader), awaitSpawn(mate)]);
+    await awaitSpawn(leader);
+    console.log(`${LEADER_NAME} spawned; waiting for Paper connection throttle window to clear.`);
+    await sleep(CONNECTION_THROTTLE_CLEAR_MS);
+
+    mate = createTrackedBot(MATE_NAME);
+    await awaitSpawn(mate);
     console.log(`Party bots spawned: ${LEADER_NAME}, ${MATE_NAME} via ${BOT_VERSION} -> ViaProxy -> Paper 26.3`);
+
+    // Server spawn-radius may place two fresh players more than the encounter's
+    // 12-block party-start boundary apart. Converge using only client-authored
+    // movement; do not use RCON teleport, which would weaken the network E2E.
+    const converged = await walkToward(
+      mate,
+      () => leader.bot.entity?.position,
+      5.0,
+      12_000
+    );
+    if (!converged) {
+      throw new Error(
+        `Party clients could not converge within start boundary; distance=${horizontalDistance(
+          leader.bot.entity.position,
+          mate.bot.entity.position
+        ).toFixed(2)}`
+      );
+    }
+    assertConnected(leader, 'before party start');
+    assertConnected(mate, 'before party start');
+    console.log(`Party clients converged; distance=${horizontalDistance(
+      leader.bot.entity.position,
+      mate.bot.entity.position
+    ).toFixed(2)} blocks.`);
 
     const leaderStart = leader.bot.entity.position.clone();
     const mateStart = mate.bot.entity.position.clone();
@@ -249,13 +280,13 @@ async function main() {
 
     throw new Error(`Party Stone Warden was not completed within kill deadline; status=${rcon('boss status')}`);
   } finally {
-    for (const tracked of [leader, mate]) {
+    for (const tracked of [leader, mate].filter(Boolean)) {
       try {
         if (tracked.bot._client && !tracked.bot._client.ended) {
           tracked.bot.quit('Party E2E complete');
         }
       } catch (error) {
-        console.error(`Failed to close ${tracked.bot.username}:`, error);
+        console.error(`Failed to close ${tracked.username}:`, error);
       }
     }
   }
