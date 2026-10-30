@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FORWARDING_SECRET: ci-forwarding-secret-ephemeral-only
+      POSTGRES_PASSWORD: ci-postgres-password-ephemeral-only
+      RCON_PASSWORD: ci-rcon-password-ephemeral-only
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.8.2
+        uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          gradle-version: '9.8.2'
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build core plugin
+        run: gradle clean build --no-daemon
+
+      - name: Start local stack
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Check PostgreSQL
+        run: docker compose exec -T postgres pg_isready -U minecraft -d minecraft
+
+      - name: Check Paper core plugin
+        run: docker compose exec -T paper rcon-cli "mcserver health"
+
+      - name: Check crossplay proxy plugins
+        run: |
+          docker compose exec -T velocity sh -ec '
+            test -f plugins/Geyser-Velocity/config.yml
+            test -f plugins/floodgate/config.yml
+          '
+
+      - name: Show stack status
+        if: always()
+        run: docker compose ps
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Stop local stack
+        if: always()
+        run: docker compose down -v

@@ -12,13 +12,23 @@ The first release is a Java + Bedrock crossplay Survival SMP with economy, light
 - [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md) — core loop, progression, economy and PvE design principles.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — technical architecture, persistence, reliability, observability and AI boundaries.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — phased delivery plan and exit gates.
+- [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) — reproducible local stack and smoke-test workflow.
 - [`AGENTS.md`](AGENTS.md) — operating rules for coding and automation agents.
 
 ## Current status
 
-**Phase 0 — Product foundation.**
+**Phase 1 — Local technical skeleton in progress.**
 
-The next implementation milestone is Phase 1: a reproducible local technical skeleton with a Paper-compatible plugin, development database, Java/Bedrock crossplay proof, CI and automated test-server startup.
+The development branch contains a Paper 26.3 / Java 25 core plugin, Velocity proxy, Geyser + Floodgate crossplay layer, PostgreSQL, Docker Compose workflow, local health checks and GitHub Actions CI.
+
+### Start locally on Windows
+
+```powershell
+.\scripts\dev-up.ps1
+.\scripts\dev-check.ps1
+```
+
+Java connects to `localhost:25565`; Bedrock connects to `localhost:19132`.
 
 ## Principles
 
