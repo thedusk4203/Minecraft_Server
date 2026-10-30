@@ -250,7 +250,7 @@ Receipts:
 - Freeze receipt: `docs/PHASE4B_FREEZE.md`.
 
 ### Phase 4C — Boss Reward Delivery
-Status: next
+Status: in progress
 
 Scope:
 - deterministic reward eligibility derived only from a completed durable boss run;
@@ -272,6 +272,56 @@ Exit gate:
 - concurrent/replayed reward delivery serializes safely;
 - reward audit and telemetry identify run, participant, reward definition/version and terminal delivery state;
 - real-client boss E2E can continue through reward completion without regressing combat or existing Phase 1–4B gates.
+
+#### Phase 4C1 — Durable Stone Warden Currency Rewards
+Status: complete / frozen
+
+Scope:
+- PostgreSQL V7 `encounter_reward` state;
+- concrete `stone_warden_completion` reward definition version 1;
+- 250 `COINS` per canonical participant of a durable completed Stone Warden run;
+- unique durable reward identity per `(run, player, reward key, reward version)`;
+- atomic economy ledger + reward acknowledgement + audit transaction;
+- deterministic economy idempotency from durable reward identity;
+- startup/periodic reconciliation for the completion-to-reward gap;
+- replay, concurrency and injected rollback verification;
+- solo and two-client real-network-client reward E2E;
+- no item/inventory mutation.
+
+Receipts:
+- PR #17 merged at `d34b3303f6322a84fc213a1b40de5f442956d7d8`.
+- Implementation final head `9d3d678b811759d932449ad0a273cacd0742f10e`.
+- Implementation CI `41039063048` succeeded.
+- PR #18 E2E hardening merged at `aa956583862fab7705db93eee917c79938c355f2`.
+- E2E-hardening CI `41051311119` succeeded.
+- Frozen merge-state CI `41055264861` succeeded.
+- Freeze receipt: `docs/PHASE4C1_FREEZE.md`.
+
+#### Phase 4C2 — Crash-safe Stone Warden Item Reward Delivery
+Status: next
+
+Scope:
+- preserve the frozen Phase 4C1 currency contract unchanged;
+- define one concrete deterministic Stone Warden item reward rather than a generic/random loot catalog;
+- persist a durable item-delivery identity and lifecycle subordinate to the existing reward identity;
+- use a stable PDC delivery marker so recovery can distinguish an already persisted pending item from a duplicate mint;
+- persist the exact marked item snapshot and integrity metadata before inventory delivery;
+- persist playerdata before acknowledging terminal item delivery in PostgreSQL;
+- protect pending marked reward items from movement/use/drop/death loss until delivery is acknowledged;
+- reconnect/respawn/automatic/manual recovery for interrupted delivery;
+- fail closed on duplicate markers, payload/hash mismatch, ownership mismatch or semantic drift;
+- expose pending/completed reward-delivery state through telemetry and admin diagnostics;
+- add concurrency and failure-injection integration coverage around item-state transitions;
+- extend solo and two-client real-client Stone Warden E2E through item receipt and durable delivery acknowledgement.
+
+Exit gate:
+- every eligible completed Stone Warden participant receives at most one item for the frozen item definition/version;
+- repeated recovery never intentionally mints a second item;
+- crash after marked-playerdata persistence but before DB acknowledgement reuses the existing marker;
+- crash after DB acknowledgement but before marker cleanup strips the stale marker without granting another item;
+- full inventory leaves a recoverable pending delivery and does not discard the reward;
+- non-completed runs and players outside the canonical participant set cannot obtain an item intent;
+- all Phase 1–4C1 regression gates remain green.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -338,19 +388,21 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Implement **Phase 4C — Boss Reward Delivery** as a separate reviewable change-set consuming the frozen Phase 4A/4B encounter and Stone Warden combat contracts.
+Implement **Phase 4C2 — Crash-safe Stone Warden Item Reward Delivery** as a separate reviewable change-set consuming the frozen Phase 4A/4B/4C1 contracts.
 
 Acceptance checklist:
-- derive eligibility only from a durable `COMPLETED` Stone Warden run and its canonical participant set;
-- define one deterministic reward definition/version for the first Stone Warden reward rather than a generic loot catalog;
-- persist one durable reward intent per `(encounter_run, participant, reward_definition)`;
-- make creation/replay semantics idempotent and semantic conflicts fail closed;
-- route currency grants through the existing PostgreSQL economy ledger in the same transaction as reward-state advancement;
-- model item delivery as a recovery-safe state machine instead of assuming Bukkit inventory + PostgreSQL are atomic;
-- use a stable marker/identity for any item delivery so reconnect/restart can distinguish an existing undelivered reward from a duplicate mint;
-- persist playerdata before acknowledging terminal item delivery state;
-- add reconnect/respawn/manual/admin recovery paths;
-- add concurrency, restart and failure-injection integration tests;
-- extend diagnostics/audit/telemetry with reward delivery state;
-- extend the real-client Stone Warden E2E gate through reward completion;
-- do not add dungeon content until this reward gate is frozen.
+- do not change the frozen 250-COINS Phase 4C1 grant semantics;
+- define one concrete deterministic item key/version for Stone Warden completion;
+- bind one durable item-delivery identity to each eligible existing `encounter_reward` identity;
+- prepare durable item delivery before mutating Bukkit inventory;
+- use a stable marker/identity so reconnect/restart can recognize an already persisted pending item instead of minting another;
+- persist an integrity-checked marked item snapshot before delivery;
+- persist playerdata before terminal database delivery acknowledgement;
+- keep unresolved marked items protected from movement/use/drop/death loss;
+- add automatic reconnect/respawn recovery plus an explicit manual recovery command;
+- treat duplicate markers, ownership mismatch and payload/hash mismatch as fail-closed states requiring diagnostics;
+- add concurrency and final-boundary failure-injection integration tests;
+- extend admin diagnostics and reward telemetry with item-delivery state;
+- extend solo and two-client real-client E2E through item receipt and durable acknowledgement;
+- keep the market recovery contract and all existing regression gates green;
+- do not add dungeon content until Phase 4C2 is frozen.
