@@ -8,9 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-and-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -32,3 +32,24 @@ jobs:
 
       - name: Build core plugin
         run: gradle clean build --no-daemon
+
+      - name: Start local stack
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Check PostgreSQL
+        run: docker compose exec -T postgres pg_isready -U minecraft -d minecraft
+
+      - name: Check Paper core plugin
+        run: docker compose exec -T paper rcon-cli "mcserver health"
+
+      - name: Show stack status
+        if: always()
+        run: docker compose ps
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Stop local stack
+        if: always()
+        run: docker compose down -v
