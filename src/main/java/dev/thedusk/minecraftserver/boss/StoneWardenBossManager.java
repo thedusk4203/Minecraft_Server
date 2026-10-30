@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
@@ -205,13 +206,13 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             bossSpawn = arenaCenter.clone().add(0.0, 1.0, 0.0);
         }
 
-        IronGolem boss;
+        IronGolem boss = null;
         try {
             boss = arenaCenter.getWorld().spawn(bossSpawn, IronGolem.class);
             boss.setPlayerCreated(false);
             boss.setRemoveWhenFarAway(false);
             boss.setPersistent(false);
-            boss.setCustomName("§8Stone Warden");
+            boss.customName(Component.text("Stone Warden"));
             boss.setCustomNameVisible(true);
 
             double maxHealth = StoneWardenCombatRules.maxHealth(participants.size());
@@ -225,6 +226,9 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                     run.runId().toString()
             );
         } catch (RuntimeException exception) {
+            if (boss != null && !boss.isDead()) {
+                boss.remove();
+            }
             logger.log(Level.SEVERE, "Failed to spawn Stone Warden for run " + run.runId(), exception);
             failPersistedStart(run.runId(), "BOSS_SPAWN_FAILED");
             return;
@@ -402,7 +406,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         boss.setVelocity(direction.clone().multiply(session.enraged ? 1.55 : 1.3).setY(0.12));
         double widthSquared = StoneWardenCombatRules.CHARGE_WIDTH * StoneWardenCombatRules.CHARGE_WIDTH;
         for (Player player : onlineParticipants(session)) {
-            if (!player.getWorld().getUID().equals(path.worldId())) {
+            if (!player.getWorld().getUID().equals(path.worldId()) || !insideArena(session, player.getLocation())) {
                 continue;
             }
             double distanceSquared = StoneWardenCombatRules.distanceSquaredToSegment2d(
@@ -446,7 +450,6 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         Player attacker = playerAttacker(byEntity.getDamager());
         if (attacker == null
                 || !session.participants().contains(attacker.getUniqueId())
-                || attacker.getWorld() != session.arenaCenter().getWorld()
                 || !insideArena(session, attacker.getLocation())) {
             event.setCancelled(true);
         }
@@ -573,12 +576,15 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
     private void enforceBossLeash(Session session, IronGolem boss) {
         if (boss.getWorld() != session.arenaCenter().getWorld()
-                || !StoneWardenCombatRules.insideRadius2d(
+                || !StoneWardenCombatRules.insideArena(
                         session.arenaCenter().getX(),
+                        session.arenaCenter().getY(),
                         session.arenaCenter().getZ(),
                         boss.getLocation().getX(),
+                        boss.getLocation().getY(),
                         boss.getLocation().getZ(),
-                        StoneWardenCombatRules.ARENA_RADIUS
+                        StoneWardenCombatRules.ARENA_RADIUS,
+                        StoneWardenCombatRules.VERTICAL_TOLERANCE
                 )) {
             boss.teleport(session.arenaCenter());
             boss.setVelocity(new Vector());
@@ -587,12 +593,15 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
     private boolean insideArena(Session session, Location location) {
         return location.getWorld() == session.arenaCenter().getWorld()
-                && StoneWardenCombatRules.insideRadius2d(
+                && StoneWardenCombatRules.insideArena(
                 session.arenaCenter().getX(),
+                session.arenaCenter().getY(),
                 session.arenaCenter().getZ(),
                 location.getX(),
+                location.getY(),
                 location.getZ(),
-                StoneWardenCombatRules.ARENA_RADIUS
+                StoneWardenCombatRules.ARENA_RADIUS,
+                StoneWardenCombatRules.VERTICAL_TOLERANCE
         );
     }
 
@@ -600,12 +609,15 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         return onlineParticipants(session).stream()
                 .filter(player -> !player.isDead())
                 .filter(player -> player.getWorld() == session.arenaCenter().getWorld())
-                .filter(player -> StoneWardenCombatRules.insideRadius2d(
+                .filter(player -> StoneWardenCombatRules.insideArena(
                         session.arenaCenter().getX(),
+                        session.arenaCenter().getY(),
                         session.arenaCenter().getZ(),
                         player.getLocation().getX(),
+                        player.getLocation().getY(),
                         player.getLocation().getZ(),
-                        StoneWardenCombatRules.PARTICIPANT_RADIUS
+                        StoneWardenCombatRules.PARTICIPANT_RADIUS,
+                        StoneWardenCombatRules.VERTICAL_TOLERANCE
                 ))
                 .toList();
     }
