@@ -1,0 +1,17 @@
+name: MinecraftServerCore
+version: '${version}'
+main: dev.thedusk.minecraftserver.MinecraftServerCore
+description: Core runtime for the AI-native Minecraft server project.
+author: thedusk4203
+api-version: '26.3'
+
+commands:
+  mcserver:
+    description: Administrative health and diagnostics command.
+    usage: /mcserver health
+    permission: minecraftserver.admin
+
+permissions:
+  minecraftserver.admin:
+    description: Allows access to MinecraftServerCore administrative commands.
+    default: op
