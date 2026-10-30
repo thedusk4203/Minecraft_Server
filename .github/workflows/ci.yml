@@ -43,6 +43,16 @@ jobs:
       - name: Build core plugin and unit tests
         run: gradle clean build --no-daemon
 
+      - name: Verify shaded runtime resources
+        run: |
+          plugin_jar="$(find build/libs -maxdepth 1 -type f -name 'minecraft-server-core-*.jar' -print -quit)"
+          test -n "$plugin_jar"
+          echo "Checking runtime resources in $plugin_jar"
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V1__core_platform.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
+          jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
+          jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
+
       - name: Run PostgreSQL integration tests
         run: gradle integrationTest --no-daemon
 
