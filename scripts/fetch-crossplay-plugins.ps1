@@ -9,6 +9,7 @@ $geyserExpectedSha512 = "02559b2aeaacbb7a0916c1e9b830fffd4638f22d79852c854fc258f
 $geyserMetadataUrl = "https://api.modrinth.com/v2/project/$geyserProjectId/version?loaders=%5B%22velocity%22%5D&game_versions=%5B%2226.3%22%5D"
 
 $floodgateVersion = "2.2.5"
+$floodgateSourceVersion = "2.2.5-SNAPSHOT"
 $floodgateBuild = 141
 $floodgateCommit = "81b65ccb766bf8024858ebf3eefa6974056aecc5"
 $floodgateSourceUrl = "https://github.com/GeyserMC/Floodgate/archive/$floodgateCommit.zip"
@@ -126,18 +127,19 @@ function Build-FloodgateVelocity {
         if ($null -eq $sourceDir) {
             throw "Floodgate source archive did not contain a source directory"
         }
-        $gradleProperties = Join-Path $sourceDir.FullName "gradle.properties"
+        $sourcePath = $sourceDir.FullName
+        $gradleProperties = Join-Path $sourcePath "gradle.properties"
         $versionLine = Get-Content -Path $gradleProperties | Where-Object { $_ -like "version=*" } | Select-Object -First 1
         $sourceVersion = $versionLine.Substring("version=".Length)
-        if ($sourceVersion -ne $floodgateVersion) {
-            throw "Floodgate source version mismatch; expected $floodgateVersion, got $sourceVersion"
+        if ($sourceVersion -ne $floodgateSourceVersion) {
+            throw "Floodgate source version mismatch; expected $floodgateSourceVersion, got $sourceVersion"
         }
 
         Write-Host "Building official Floodgate commit with BUILD_NUMBER=$floodgateBuild..."
         & docker run --rm `
             -e "BUILD_NUMBER=$floodgateBuild" `
             -e "GRADLE_USER_HOME=/tmp/gradle-home" `
-            -v "${sourceDir}:/workspace" `
+            -v "${sourcePath}:/workspace" `
             -w /workspace `
             $floodgateGradleImage `
             gradle :velocity:build --no-daemon
@@ -145,7 +147,7 @@ function Build-FloodgateVelocity {
             throw "Floodgate Gradle build failed with exit code $LASTEXITCODE"
         }
 
-        $builtJar = Join-Path $sourceDir.FullName "velocity/build/libs/floodgate-velocity.jar"
+        $builtJar = Join-Path $sourcePath "velocity/build/libs/floodgate-velocity.jar"
         if (-not (Test-Path $builtJar)) {
             throw "Floodgate build did not produce velocity/build/libs/floodgate-velocity.jar"
         }
@@ -154,7 +156,8 @@ function Build-FloodgateVelocity {
         @(
             "source=https://github.com/GeyserMC/Floodgate",
             "commit=$floodgateCommit",
-            "version=$floodgateVersion",
+            "source_version=$floodgateSourceVersion",
+            "runtime_version=$floodgateVersion",
             "build=$floodgateBuild",
             "sha256=$builtSha"
         ) | Set-Content -Path $provenanceFile -Encoding Ascii
