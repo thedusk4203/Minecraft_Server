@@ -92,7 +92,8 @@ public final class FirstSkillCurrencyService {
                         currencyGranted,
                         balanceAfter,
                         normalizedSkillId,
-                        level
+                        level,
+                        progress.landClaimed()
                 );
             } catch (SQLException | RuntimeException exception) {
                 rollback(connection, exception);
