@@ -74,12 +74,6 @@ Scope:
 - first successful claim recorded as a durable milestone
 - onboarding state survives restart/reconnect
 
-Exit gate met:
-- A new player receives the first objective without staff intervention.
-- Creating the first non-cancelled GriefPrevention claim records `land_claimed_at` exactly once.
-- Repeated joins/claims are idempotent.
-- Restart preserves the onboarding milestone.
-
 Receipt:
 - PR #4 merged at `eab159695157a811abb987e7f8a23e56bf9eac0c`.
 - Final-head CI `41000886983` succeeded.
@@ -131,7 +125,6 @@ Scope:
 - seller cancellation uses `LISTED -> RETURN_PENDING -> CANCELLED`
 - returned item is persisted to playerdata before terminal `CANCELLED`
 - reconnect and `/market recover` reconcile interrupted prepare/activate/cancel flows
-- minimal `/market sell`, `/market list`, `/market cancel`, `/market recover` surface
 
 Receipt:
 - PR #7 merged at `8ccfa391cdc1ef86194b9795f4fff3066d7d4b41`.
@@ -146,20 +139,8 @@ Scope:
 - payment composes Phase 3C1 `EconomyTransfer` in the same transaction as `DELIVERY_PENDING`
 - deterministic per-listing payment idempotency key prevents double charge
 - buyer item delivery reuses the escrow token as an exactly-once recovery identity
-- marked item is persisted to playerdata before database delivery acknowledgement
 - reconnect/respawn/manual recovery finishes interrupted delivery
 - first completed market action records `market_used_at` for both buyer and seller
-- onboarding guidance points directly to `/market list`, `/market buy`, and `/market sell`
-
-Exit gate met:
-- A player with onboarding currency can buy one listing without staff intervention.
-- Payment is charged exactly once and seller is credited exactly once under replay.
-- Two concurrent buyers cannot both acquire the same listing.
-- Insufficient funds leaves the listing available and creates no purchase.
-- Paid delivery survives disconnect/restart and reuses the marked item instead of intentionally minting a duplicate.
-- `market_used_at` is written only after completed delivery.
-- Final payment and completion transaction boundaries fail closed under injected audit conflicts.
-- Full Paper/crossplay stack remains green after merge.
 
 Receipt:
 - PR #8 merged at `8657de3c1116e95f051f04f465d686f8d8c39790`.
@@ -167,7 +148,7 @@ Receipt:
 - Merge-state CI `41017540269` succeeded.
 
 ## Phase 4 — PvE content
-Status: next
+Status: in progress
 
 Deliverables:
 - Encounter framework
@@ -180,31 +161,42 @@ Exit gate:
 - A small party can complete the full PvE loop repeatedly without duplication/data-loss bugs.
 
 ### Phase 4A — Encounter Runtime Foundation
-Status: next
+Status: implemented in PR #10 — pending final CI, merge and freeze
 
-Scope:
-- data-driven encounter definition validation
-- durable encounter run identity and lifecycle
-- participant tracking sufficient for later party encounters
-- attempt/completion/failure telemetry
-- restart-safe state handling
-- audit/diagnostic visibility
-- deterministic lifecycle/idempotency tests
+Implemented scope:
+- V6 durable `encounter_run` and `encounter_participant` state
+- resource-driven encounter definitions with strict startup validation
+- canonical semantic SHA-256 definition fingerprints stored with every run
+- explicit lifecycle `ACTIVE -> COMPLETED | FAILED | ABANDONED`
+- start idempotency keyed by a globally unique correlation ID
+- canonical participant membership persistence
+- row-locked terminal transitions and one terminal audit per run
+- startup recovery that converts stale `ACTIVE` rows to `ABANDONED / SERVER_RESTART`
+- encounter attempt/completion/failure/abandonment audit telemetry
+- `/mcserver diagnostics` total/active encounter run visibility
+- Flyway/Paper classloader hardening plus shaded-JAR migration/resource verification
+- unit and PostgreSQL 18 integration tests for validation, replay, concurrency, restart and failure-injection rollback
 
 Non-goals for 4A:
 - first boss mechanics
+- mob spawning
 - dungeon layout/content
 - reward economy or loot delivery
-- matchmaking/party system expansion
-- complex GUI tooling
+- matchmaking/party-system expansion
+- player-facing encounter UI
 
-Exit gate:
-- one synthetic encounter definition can start and terminate a durable run deterministically;
+Exit gate pending freeze:
+- one synthetic encounter definition starts and terminates a durable run deterministically;
 - invalid definitions fail startup/validation closed;
 - duplicate/replayed lifecycle commands cannot create conflicting terminal outcomes;
-- restart preserves unresolved run state and recovery semantics are explicit;
+- concurrent conflicting terminal transitions serialize to one winner;
+- unresolved runs receive explicit restart semantics instead of pretending world state survived;
 - run/participant telemetry is queryable and auditable;
-- existing Phase 1–3 integration and full-stack smoke tests remain green.
+- transaction-tail audit conflicts roll back preceding run state;
+- V6 and encounter resources are present in the shaded runtime JAR;
+- existing Phase 1–3 integration and full-stack/crossplay smoke remain green.
+
+Implementation detail: `docs/ENCOUNTER_RUNTIME.md`.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -271,16 +263,6 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Implement **Phase 4A — Encounter Runtime Foundation** as a separate reviewable change-set.
+Finish **Phase 4A — Encounter Runtime Foundation** on PR #10, require exact-head CI and merge-state CI to pass, then freeze 4A in a docs-only receipt before starting Phase 4B.
 
-Acceptance checklist:
-- introduce versioned persistence only for durable encounter-run state that truly needs PostgreSQL;
-- define and validate a minimal data-driven encounter schema;
-- create a stable encounter/run identity model;
-- model explicit non-terminal and terminal lifecycle states without ambiguous replay;
-- persist participants and timestamps needed for later multi-player telemetry;
-- define restart behavior for unresolved runs;
-- expose enough diagnostics/audit data to investigate a stuck or conflicting run;
-- add PostgreSQL integration tests for start/replay/terminal transition/restart/concurrency invariants;
-- do not add boss rewards before run lifecycle correctness is proven;
-- keep all existing onboarding/economy/market/crossplay tests green.
+Phase 4B should be the first boss encounter consuming the frozen runtime. Boss mechanics, telegraphs, leash/anti-cheese rules and encounter completion/failure wiring should be reviewed separately from deterministic reward/loot delivery.
