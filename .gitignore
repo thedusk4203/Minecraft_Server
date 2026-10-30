@@ -1,0 +1,9 @@
+.gradle/
+build/
+runtime/
+.env
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
