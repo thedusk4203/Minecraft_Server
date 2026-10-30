@@ -31,7 +31,7 @@ Endpoints:
 .\scripts\dev-check.ps1
 ```
 
-The check validates PostgreSQL readiness, invokes `/mcserver health` through Paper RCON, confirms GriefPrevention and AuraSkills are loaded, and prints recent Velocity/Geyser/Floodgate logs.
+The check validates PostgreSQL readiness, invokes `/mcserver health` through Paper RCON, confirms GriefPrevention and AuraSkills are loaded, verifies the market command is registered, and prints recent Velocity/Geyser/Floodgate logs.
 
 Administrative commands require `minecraftserver.admin` (operator by default):
 
@@ -62,7 +62,28 @@ The first observed AuraSkills level-up records:
 
 The money is granted by `MinecraftServerCore`, not AuraSkills/Vault. The deterministic ledger idempotency key prevents repeated or concurrent level-up events from paying the onboarding grant twice.
 
-If the player levels a skill before claiming land, that progress is still recorded safely; join guidance continues to prioritize the missing land claim. Once land + first skill/currency are both complete, the current implementation reports that the available onboarding steps are complete while the trading slice is still pending.
+### Seller market escrow — Phase 3C2a
+
+Market use is enabled for normal players through `minecraftserver.market`.
+
+Current commands:
+
+- `/market sell <price>` — escrow the entire stack currently held in the main hand and publish it after durable removal from playerdata;
+- `/market list` — display up to 20 active LISTED rows;
+- `/market cancel <listing #>` — move the seller's listing through RETURN_PENDING and return the item before terminal cancellation;
+- `/market recover` — retry interrupted PREPARED/RETURN_PENDING transitions.
+
+A temporary internal PDC marker appears only while an item is participating in the escrow saga. Marked items are locked against normal player movement/use and are kept through death. Do not remove the marker manually; use `/market recover` if a transition is interrupted.
+
+Buyer purchase is intentionally unavailable in Phase 3C2a. A visible listing proves seller-side escrow only; Phase 3C2b will add atomic payment and retry-safe buyer delivery. `market_used_at` is therefore not recorded yet.
+
+Suggested manual recovery checks:
+
+1. Hold a disposable stack and run `/market sell 25`.
+2. Confirm the stack leaves inventory and `/market list` shows the new listing.
+3. Run `/market cancel <#>` and confirm the exact stack returns.
+4. Repeat with a full inventory: cancellation should remain RETURN_PENDING until one slot is free, then `/market recover` should finish it.
+5. Reconnect while a recovery is pending and confirm the same transition resumes without an extra item.
 
 ## Stop
 
@@ -92,4 +113,4 @@ Velocity performs Mojang authentication. The Paper backend therefore has `online
 
 Geyser and Floodgate are installed on Velocity from their official download API on container startup. Geyser runs at the proxy layer; it is intentionally not installed on the Paper backend.
 
-Land protection and skill progression are server-side through GriefPrevention and AuraSkills, so Java and Bedrock clients share the same authoritative gameplay rules even though their client input methods differ.
+Land protection, skill progression and the market command flow are server-side, so Java and Bedrock clients share the same authoritative rules without a required client mod.
