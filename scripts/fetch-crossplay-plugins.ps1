@@ -6,6 +6,29 @@ $baseUrl = "https://download.geysermc.org/v2/projects"
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock] $Operation,
+        [Parameter(Mandatory = $true)][string] $Description
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            return & $Operation
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -eq 5) {
+                break
+            }
+            Write-Warning "$Description failed on attempt $attempt/5: $($_.Exception.Message)"
+            Start-Sleep -Seconds 2
+        }
+    }
+    throw "$Description failed after 5 attempts: $($lastError.Exception.Message)"
+}
+
 function Get-PinnedPlugin {
     param(
         [Parameter(Mandatory = $true)][string] $Project,
@@ -21,7 +44,9 @@ function Get-PinnedPlugin {
     $tempFile = "$outputFile.tmp-$([Guid]::NewGuid().ToString('N'))"
 
     Write-Host "Resolving pinned $Project $Version build $Build..."
-    $metadata = Invoke-RestMethod -Uri $metadataUrl -MaximumRetryCount 4 -RetryIntervalSec 2
+    $metadata = Invoke-WithRetry -Description "Fetch $Project metadata" -Operation {
+        Invoke-RestMethod -Uri $metadataUrl
+    }
 
     if ($metadata.project_id -ne $Project) {
         throw "Project mismatch: expected $Project, got $($metadata.project_id)"
@@ -56,7 +81,9 @@ function Get-PinnedPlugin {
 
     try {
         Write-Host "Downloading $upstreamName -> $OutputName..."
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile -MaximumRetryCount 4 -RetryIntervalSec 2
+        Invoke-WithRetry -Description "Download $Project artifact" -Operation {
+            Invoke-WebRequest -UseBasicParsing -Uri $downloadUrl -OutFile $tempFile | Out-Null
+        } | Out-Null
         $actualSha = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualSha -ne $expectedSha) {
             throw "SHA-256 mismatch for $Project $Version build $Build; expected $expectedSha, got $actualSha"
