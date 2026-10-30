@@ -3,8 +3,14 @@ package dev.thedusk.minecraftserver.onboarding;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.thedusk.minecraftserver.audit.AuditLog;
+import dev.thedusk.minecraftserver.economy.EconomyException;
+import dev.thedusk.minecraftserver.economy.EconomyLedger;
+import dev.thedusk.minecraftserver.economy.EconomyMutation;
 import dev.thedusk.minecraftserver.identity.PlayerIdentity;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
@@ -31,6 +37,8 @@ class OnboardingPersistenceIntegrationTest {
     private static DatabaseManager database;
     private static PlayerIdentityRepository identities;
     private static OnboardingProgressRepository onboarding;
+    private static EconomyLedger economy;
+    private static FirstSkillCurrencyService firstSkillCurrency;
 
     @BeforeAll
     static void openDatabase() {
@@ -48,7 +56,10 @@ class OnboardingPersistenceIntegrationTest {
     void clearState() throws Exception {
         try (var connection = database.connection();
              var statement = connection.createStatement()) {
-            statement.execute("TRUNCATE TABLE player_onboarding, player_identity CASCADE");
+            statement.execute(
+                    "TRUNCATE TABLE economy_transaction, economy_account, audit_event, "
+                            + "player_onboarding, player_identity CASCADE"
+            );
         }
     }
 
@@ -79,11 +90,96 @@ class OnboardingPersistenceIntegrationTest {
     }
 
     @Test
-    void restartPreservesLandClaimMilestone() {
+    void firstSkillLevelAtomicallyGrantsStarterCurrencyExactlyOnce() throws Exception {
+        PlayerIdentity player = identities.recordSeen(UUID.randomUUID(), "SkillStarter");
+        onboarding.ensureStarted(player.playerId());
+        onboarding.markLandClaimed(player.playerId());
+
+        FirstSkillCurrencyResult first = firstSkillCurrency.recordLevelUp(
+                player.playerId(),
+                "auraskills/mining",
+                2,
+                UUID.randomUUID()
+        );
+
+        assertTrue(first.firstSkillRecorded());
+        assertTrue(first.currencyGranted());
+        assertEquals(FirstSkillCurrencyService.STARTER_REWARD, first.balanceAfter());
+        assertTrue(first.landClaimed());
+
+        OnboardingProgress progress = onboarding.find(player.playerId()).orElseThrow();
+        assertTrue(progress.firstSkillLeveled());
+        assertEquals("auraskills/mining", progress.firstSkillId());
+        assertEquals(2, progress.firstSkillLevel());
+        assertTrue(progress.firstCurrencyEarned());
+        assertEquals(FirstSkillCurrencyService.STARTER_REWARD, economy.balance(player.playerId(), "COINS"));
+        assertEquals(1L, countRows("economy_transaction"));
+        assertEquals(1L, countRows("audit_event"));
+
+        FirstSkillCurrencyResult replay = firstSkillCurrency.recordLevelUp(
+                player.playerId(),
+                "auraskills/farming",
+                3,
+                UUID.randomUUID()
+        );
+
+        assertFalse(replay.firstSkillRecorded());
+        assertFalse(replay.currencyGranted());
+        assertEquals(FirstSkillCurrencyService.STARTER_REWARD, economy.balance(player.playerId(), "COINS"));
+        assertEquals(1L, countRows("economy_transaction"));
+        assertEquals(1L, countRows("audit_event"));
+
+        OnboardingProgress afterReplay = onboarding.find(player.playerId()).orElseThrow();
+        assertEquals("auraskills/mining", afterReplay.firstSkillId());
+        assertEquals(2, afterReplay.firstSkillLevel());
+    }
+
+    @Test
+    void economyConflictRollsBackSkillAndCurrencyMilestones() {
+        PlayerIdentity player = identities.recordSeen(UUID.randomUUID(), "AtomicRollback");
+        onboarding.ensureStarted(player.playerId());
+        String onboardingKey = "onboarding:first-currency:" + player.playerId();
+
+        economy.apply(new EconomyMutation(
+                player.playerId(),
+                "COINS",
+                1L,
+                "test.conflict",
+                onboardingKey,
+                UUID.randomUUID(),
+                "{}"
+        ));
+
+        EconomyException exception = assertThrows(
+                EconomyException.class,
+                () -> firstSkillCurrency.recordLevelUp(
+                        player.playerId(),
+                        "auraskills/farming",
+                        2,
+                        UUID.randomUUID()
+                )
+        );
+
+        assertEquals(EconomyException.Code.IDEMPOTENCY_CONFLICT, exception.code());
+        OnboardingProgress progress = onboarding.find(player.playerId()).orElseThrow();
+        assertFalse(progress.firstSkillLeveled());
+        assertFalse(progress.firstCurrencyEarned());
+        assertNull(progress.firstSkillId());
+        assertNull(progress.firstSkillLevel());
+        assertEquals(1L, economy.balance(player.playerId(), "COINS"));
+    }
+
+    @Test
+    void restartPreservesLandSkillAndCurrencyMilestones() {
         UUID minecraftUuid = UUID.randomUUID();
-        PlayerIdentity beforeRestart = identities.recordSeen(minecraftUuid, "RestartClaim");
-        onboarding.ensureStarted(beforeRestart.playerId());
+        PlayerIdentity beforeRestart = identities.recordSeen(minecraftUuid, "RestartSkill");
         onboarding.markLandClaimed(beforeRestart.playerId());
+        firstSkillCurrency.recordLevelUp(
+                beforeRestart.playerId(),
+                "auraskills/foraging",
+                2,
+                UUID.randomUUID()
+        );
 
         database.close();
         openServices();
@@ -92,7 +188,11 @@ class OnboardingPersistenceIntegrationTest {
         OnboardingProgress progress = onboarding.find(afterRestart.playerId()).orElseThrow();
         assertEquals(beforeRestart.playerId(), afterRestart.playerId());
         assertTrue(progress.landClaimed());
-        assertNotNull(progress.landClaimedAt());
+        assertTrue(progress.firstSkillLeveled());
+        assertEquals("auraskills/foraging", progress.firstSkillId());
+        assertEquals(2, progress.firstSkillLevel());
+        assertTrue(progress.firstCurrencyEarned());
+        assertEquals(FirstSkillCurrencyService.STARTER_REWARD, economy.balance(afterRestart.playerId(), "COINS"));
     }
 
     private static void openServices() {
@@ -106,6 +206,8 @@ class OnboardingPersistenceIntegrationTest {
         ));
         identities = new PlayerIdentityRepository(database);
         onboarding = new OnboardingProgressRepository(database);
+        economy = new EconomyLedger(database, new AuditLog());
+        firstSkillCurrency = new FirstSkillCurrencyService(database, onboarding, economy);
     }
 
     private static long countRows(String table) throws Exception {
