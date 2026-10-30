@@ -48,7 +48,6 @@ public final class EncounterRunRepository {
             SELECT player_id
             FROM encounter_participant
             WHERE run_id = ?
-            ORDER BY player_id
             """;
 
     private static final String TERMINATE_SQL = """
@@ -385,7 +384,7 @@ public final class EncounterRunRepository {
                 while (result.next()) {
                     participants.add(result.getObject("player_id", UUID.class));
                 }
-                return List.copyOf(participants);
+                return participants.stream().sorted().toList();
             }
         }
     }
