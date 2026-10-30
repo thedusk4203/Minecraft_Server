@@ -1,7 +1,10 @@
 package dev.thedusk.minecraftserver.market;
 
 import dev.thedusk.minecraftserver.economy.EconomyMutation;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
@@ -39,6 +42,9 @@ public record MarketListingDraft(
         if (!SHA256_PATTERN.matcher(itemSha256).matches()) {
             throw new IllegalArgumentException("itemSha256 must be 64 lowercase hex characters");
         }
+        if (!sha256(itemPayload).equals(itemSha256)) {
+            throw new IllegalArgumentException("itemSha256 does not match itemPayload");
+        }
         materialKey = require(materialKey, "materialKey", 128).toLowerCase(Locale.ROOT);
         if (!MATERIAL_KEY_PATTERN.matcher(materialKey).matches()) {
             throw new IllegalArgumentException("materialKey must be a lowercase namespaced key");
@@ -55,6 +61,14 @@ public record MarketListingDraft(
     @Override
     public byte[] itemPayload() {
         return Arrays.copyOf(itemPayload, itemPayload.length);
+    }
+
+    private static String sha256(byte[] payload) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 must be available in the JVM", exception);
+        }
     }
 
     private static String require(String value, String field, int maximum) {
