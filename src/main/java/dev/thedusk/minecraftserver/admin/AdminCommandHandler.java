@@ -152,6 +152,10 @@ public final class AdminCommandHandler implements CommandExecutor {
                             + snapshot.economyAccounts()
                             + " | economyTx="
                             + snapshot.economyTransactions()
+                            + " | encounterRuns="
+                            + snapshot.encounterRuns()
+                            + " | activeEncounterRuns="
+                            + snapshot.activeEncounterRuns()
                             + " | auditEvents="
                             + snapshot.auditEvents()
                             + " | pool(active/idle)="
