@@ -19,10 +19,16 @@ public record MarketListing(
         long priceAmount,
         UUID prepareCorrelationId,
         UUID returnCorrelationId,
+        UUID buyerPlayerId,
+        UUID purchaseCorrelationId,
+        UUID buyerDebitTransactionId,
+        UUID sellerCreditTransactionId,
         Instant createdAt,
         Instant listedAt,
         Instant returnRequestedAt,
         Instant cancelledAt,
+        Instant purchasedAt,
+        Instant completedAt,
         long version
 ) {
     public MarketListing {
@@ -37,6 +43,17 @@ public record MarketListing(
         Objects.requireNonNull(prepareCorrelationId, "prepareCorrelationId");
         Objects.requireNonNull(createdAt, "createdAt");
         itemPayload = Arrays.copyOf(itemPayload, itemPayload.length);
+
+        if (status == MarketListingStatus.DELIVERY_PENDING || status == MarketListingStatus.COMPLETED) {
+            Objects.requireNonNull(buyerPlayerId, "buyerPlayerId");
+            Objects.requireNonNull(purchaseCorrelationId, "purchaseCorrelationId");
+            Objects.requireNonNull(buyerDebitTransactionId, "buyerDebitTransactionId");
+            Objects.requireNonNull(sellerCreditTransactionId, "sellerCreditTransactionId");
+            Objects.requireNonNull(purchasedAt, "purchasedAt");
+        }
+        if (status == MarketListingStatus.COMPLETED) {
+            Objects.requireNonNull(completedAt, "completedAt");
+        }
     }
 
     @Override
