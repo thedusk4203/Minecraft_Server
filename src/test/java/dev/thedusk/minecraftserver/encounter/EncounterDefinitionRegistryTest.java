@@ -12,19 +12,28 @@ import org.junit.jupiter.api.Test;
 
 class EncounterDefinitionRegistryTest {
     @Test
-    void productionRegistryLoadsSyntheticProbe() {
+    void productionRegistryLoadsProbeAndStoneWarden() {
         EncounterDefinitionRegistry registry = EncounterDefinitionRegistry.load(
                 EncounterDefinitionRegistryTest.class.getClassLoader()
         );
 
-        assertEquals(1, registry.size());
-        EncounterDefinition definition = registry.require("FRAMEWORK_PROBE");
-        assertEquals("framework_probe", definition.id());
-        assertEquals(1, definition.version());
-        assertEquals(1, definition.minPlayers());
-        assertEquals(4, definition.maxPlayers());
-        assertEquals(300, definition.timeoutSeconds());
-        assertTrue(definition.definitionSha256().matches("[0-9a-f]{64}"));
+        assertEquals(2, registry.size());
+
+        EncounterDefinition probe = registry.require("FRAMEWORK_PROBE");
+        assertEquals("framework_probe", probe.id());
+        assertEquals(1, probe.version());
+        assertEquals(1, probe.minPlayers());
+        assertEquals(4, probe.maxPlayers());
+        assertEquals(300, probe.timeoutSeconds());
+        assertTrue(probe.definitionSha256().matches("[0-9a-f]{64}"));
+
+        EncounterDefinition stoneWarden = registry.require("STONE_WARDEN");
+        assertEquals("stone_warden", stoneWarden.id());
+        assertEquals(1, stoneWarden.version());
+        assertEquals(1, stoneWarden.minPlayers());
+        assertEquals(4, stoneWarden.maxPlayers());
+        assertEquals(300, stoneWarden.timeoutSeconds());
+        assertTrue(stoneWarden.definitionSha256().matches("[0-9a-f]{64}"));
     }
 
     @Test
