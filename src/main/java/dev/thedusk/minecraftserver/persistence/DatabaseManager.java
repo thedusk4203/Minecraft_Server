@@ -12,6 +12,8 @@ public final class DatabaseManager implements AutoCloseable {
     private static final Duration CONNECTION_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration VALIDATION_TIMEOUT = Duration.ofSeconds(2);
     private static final String POSTGRES_DRIVER = "org.postgresql.Driver";
+    private static final String MIGRATION_LOCATION = "classpath:db/migration";
+    private static final String MIGRATION_SENTINEL = "db/migration/V1__core_platform.sql";
 
     private final HikariDataSource dataSource;
 
@@ -72,9 +74,17 @@ public final class DatabaseManager implements AutoCloseable {
     }
 
     private void migrate() {
-        Flyway.configure()
+        ClassLoader pluginClassLoader = DatabaseManager.class.getClassLoader();
+        if (pluginClassLoader.getResource(MIGRATION_SENTINEL) == null) {
+            throw new PersistenceException(
+                    "Core migration resource is missing from the plugin runtime: " + MIGRATION_SENTINEL
+            );
+        }
+
+        Flyway.configure(pluginClassLoader)
                 .dataSource(dataSource)
-                .locations("classpath:db/migration")
+                .locations(MIGRATION_LOCATION)
+                .failOnMissingLocations(true)
                 .load()
                 .migrate();
     }
