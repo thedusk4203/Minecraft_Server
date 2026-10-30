@@ -323,8 +323,8 @@ public final class MarketPurchaseRepository {
                 connection,
                 transfer(listing, purchase.buyerPlayerId(), purchase.purchaseCorrelationId())
         );
-        if (!replay.transactionIdDebit().equals(purchase.buyerDebitTransactionId())
-                || !replay.transactionIdCredit().equals(purchase.sellerCreditTransactionId())) {
+        if (!replay.debitTransactionId().equals(purchase.buyerDebitTransactionId())
+                || !replay.creditTransactionId().equals(purchase.sellerCreditTransactionId())) {
             throw new MarketException(
                     MarketException.Code.IDEMPOTENCY_CONFLICT,
                     "Market purchase ledger identity does not match durable purchase state"
@@ -343,8 +343,8 @@ public final class MarketPurchaseRepository {
             statement.setObject(2, listing.listingId());
             statement.setObject(3, buyerPlayerId);
             statement.setObject(4, settlement.correlationId());
-            statement.setObject(5, settlement.transactionIdDebit());
-            statement.setObject(6, settlement.transactionIdCredit());
+            statement.setObject(5, settlement.debitTransactionId());
+            statement.setObject(6, settlement.creditTransactionId());
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) {
                     throw new SQLException("Market purchase insert returned no row");
