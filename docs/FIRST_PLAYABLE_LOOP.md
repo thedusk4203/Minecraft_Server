@@ -18,9 +18,9 @@ Phase 3A pins **GriefPrevention 16.18.7**. GriefPrevention remains authoritative
 
 ## Phase 3B — first skill level and starter currency
 
-Status: in progress
+Status: complete
 
-Phase 3B pins **AuraSkills 2.4.0**, whose release line supports Minecraft/Paper 26.3. AuraSkills supplies the skill progression signal; it does not become the authoritative economy.
+Phase 3B pins **AuraSkills 2.4.0**. AuraSkills supplies the skill progression signal; it does not become the authoritative economy.
 
 Flow:
 
@@ -35,23 +35,70 @@ The deterministic reward idempotency key is:
 
 `onboarding:first-currency:<player_id>`
 
-The `100 COINS` amount is a small teaching grant for the onboarding loop, not a recurring income faucet and not a claim about final economy balance.
+The `100 COINS` amount is a small teaching grant for the onboarding loop, not a recurring income faucet and not a final economy-balance decision.
+
+Phase 3B merged in PR #5 at `bb28cbf133fc0a4ef203a1147ce9402b440d5249`; final-head CI `41002439944` passed.
 
 ### Why Vault money rewards are disabled
 
-AuraSkills 2.4.0 can reward money through Vault, but Phase 3B intentionally does not use that capability. The server economy is PostgreSQL-authoritative and requires ledger idempotency, correlation IDs and no ordinary JDBC on the Minecraft main thread. Money enters the economy only through core-owned transaction logic.
+AuraSkills can reward money through Vault, but Phase 3B intentionally does not use that capability. The server economy is PostgreSQL-authoritative and requires ledger idempotency, correlation IDs and no ordinary JDBC on the Minecraft main thread. Money enters the economy only through core-owned transaction logic.
 
 ### Atomicity boundary
 
 `EconomyLedger.applyInTransaction` reuses the existing row-lock, overflow, negative-balance, idempotency and audit logic inside a transaction owned by a higher-level workflow. It never commits or rolls back the caller's connection.
 
-`FirstSkillCurrencyService` locks the player's onboarding row before applying the deterministic economy mutation. If any ledger write fails, the first-skill and first-currency onboarding changes roll back with it. Integration tests deliberately inject an idempotency conflict to verify this behavior.
+`FirstSkillCurrencyService` locks the player's onboarding row before applying the deterministic economy mutation. If any ledger write fails, the first-skill and first-currency onboarding changes roll back with it.
+
+## Phase 3C — first trade / market
+
+Status: in progress
+
+Phase 3C is split into two slices because Minecraft inventory state and PostgreSQL state do not share a transaction manager. A synchronous Vault bridge would not solve that failure boundary and would violate the existing no-main-thread-JDBC rule.
+
+### Phase 3C1 — atomic payment settlement
+
+The first slice adds a server-owned two-wallet settlement primitive:
+
+1. validate payer, payee, currency, amount and idempotency key;
+2. ensure both wallet rows exist;
+3. lock both rows in deterministic internal-player UUID order;
+4. verify the transfer has not already settled;
+5. debit the payer and credit the payee inside one PostgreSQL transaction;
+6. append the normal immutable `economy.balance_changed` audit for each side;
+7. append an `economy.transfer` audit tying both ledger transactions to one correlation ID;
+8. commit once.
+
+A transfer uses one external idempotency key and derives two ledger keys:
+
+- `<transfer-key>:debit`
+- `<transfer-key>:credit`
+
+The base key is limited to 120 characters so the derived keys remain inside the existing 128-character `EconomyMutation` contract. Transfer-level audit keys use `transfer:<transfer-key>` and remain inside the audit schema limit.
+
+This slice deliberately does **not** mutate inventory or mark `market_used_at`. Passing Phase 3C1 proves only that money settlement is safe enough to compose into a later market state machine.
+
+### Phase 3C2 — listing, escrow and delivery
+
+The next slice will add durable market state. The implementation must treat item delivery as a retryable workflow rather than pretending it can commit atomically with PostgreSQL.
+
+Required direction:
+
+- durable listing/order identity;
+- immutable item snapshot/fingerprint sufficient to validate the intended item;
+- explicit lifecycle states for reservation, payment and delivery;
+- payment through the Phase 3C1 transfer primitive;
+- delivery acknowledgement before the order becomes terminal;
+- reconnect/restart recovery for paid-but-not-delivered orders;
+- no double delivery on retry;
+- `market_used_at` recorded only after the first completed market action.
+
+The smallest usable surface is preferred over a large auction-house feature set. Java and Bedrock players must both be able to understand and execute the flow without a required client mod.
 
 ## Threading boundary
 
 Bukkit, GriefPrevention and AuraSkills event state is captured on the owning server thread. PostgreSQL writes are dispatched through `PersistenceExecutor`; no onboarding/economy JDBC work runs on the Minecraft main thread.
 
-Completion messages are scheduled back onto the Bukkit main thread and resolve the current online player by UUID rather than retaining a live `Player` object across asynchronous work.
+Future market item capture/removal/delivery must occur on the Bukkit owning thread. Database reservation/payment/recovery work must remain off-thread, with explicit state transitions connecting the two sides.
 
 ## Durable onboarding contract
 
@@ -66,7 +113,7 @@ Current milestones:
 - `first_skill_level`
 - `first_currency_earned_at`
 
-Reserved for later slices:
+Reserved for the remaining loop:
 
 - `market_used_at`
 - `completed_at`
@@ -77,7 +124,8 @@ Required invariants:
 - the first skill ID/level is immutable through normal replay;
 - the first-currency reward is globally idempotent for that player;
 - skill/currency milestone and ledger write are atomic;
-- restart/reconnect preserves progress and balance.
+- restart/reconnect preserves progress and balance;
+- `market_used_at` must not be marked merely because payment was attempted.
 
 ## Reconnect guidance
 
@@ -85,23 +133,7 @@ Guidance is derived from durable state rather than a session-only stage:
 
 - no land claim → claim objective;
 - land claimed but no first currency → AuraSkills level-up objective and `/skills` hint;
-- land + skill/currency complete → current implemented onboarding steps are complete and the player can continue gathering resources until the trading slice arrives.
+- land + skill/currency complete but no market action → trading objective once Phase 3C2 is available;
+- market complete → onboarding can advance to its completion state.
 
-This also handles out-of-order play: if a player levels a skill before claiming land, the reward is still recorded exactly once and the land objective remains the visible blocker until completed.
-
-## Phase 3C direction — trading/market
-
-Do not adopt a market plugin solely because it supports Vault economy calls. The core economy is PostgreSQL-authoritative and its JDBC operations must not be forced into synchronous main-thread callbacks.
-
-QuickShop-Hikari was evaluated as a compatibility candidate, but its Vault-style economy boundary does not fit the current threading/durability contract cleanly. The default direction is a small server-owned async listing/escrow flow backed by the existing economy ledger unless a dependency proves it can preserve the same idempotency and transaction guarantees.
-
-## Phase 3B acceptance
-
-Phase 3B is complete only when:
-- the V3 migration passes against PostgreSQL 18;
-- AuraSkills 2.4.0 compiles and loads with Paper 26.3;
-- the first skill level is persisted with skill ID + level;
-- the onboarding reward is paid exactly once;
-- an induced economy conflict proves skill/currency milestone rollback;
-- restart preserves land, skill, currency milestone and balance;
-- full Docker stack remains green with GriefPrevention, AuraSkills, Velocity, Geyser and Floodgate.
+Out-of-order activity must remain safe. A skill can level before land is claimed, and future market recovery must tolerate disconnects between inventory and database transitions without duplicating value.
