@@ -5,6 +5,7 @@ public record FirstSkillCurrencyResult(
         boolean currencyGranted,
         long balanceAfter,
         String skillId,
-        int skillLevel
+        int skillLevel,
+        boolean landClaimed
 ) {
 }
