@@ -36,11 +36,9 @@ public final class AdminDiagnosticsService {
 
     public AdminDiagnosticsSnapshot collect(
             UUID actorMinecraftUuid,
-            String subcommand,
             UUID correlationId
     ) {
         Objects.requireNonNull(correlationId, "correlationId");
-        String normalizedSubcommand = normalizeSubcommand(subcommand);
         Counts counts;
 
         try (Connection connection = database.connection()) {
@@ -48,14 +46,7 @@ public final class AdminDiagnosticsService {
             try {
                 UUID actorPlayerId = findActorPlayerId(connection, actorMinecraftUuid);
                 counts = readCounts(connection);
-                auditLog.append(
-                        connection,
-                        actorPlayerId,
-                        "admin.command",
-                        correlationId,
-                        null,
-                        "{\"subcommand\":\"" + normalizedSubcommand + "\"}"
-                );
+                appendAdminAudit(connection, actorPlayerId, "diagnostics", correlationId);
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 rollback(connection, exception);
@@ -72,6 +63,38 @@ public final class AdminDiagnosticsService {
                 counts.auditEvents(),
                 database.activeConnections(),
                 database.idleConnections()
+        );
+    }
+
+    public void auditCommand(
+            UUID actorMinecraftUuid,
+            String subcommand,
+            UUID correlationId
+    ) {
+        Objects.requireNonNull(correlationId, "correlationId");
+        String normalizedSubcommand = normalizeSubcommand(subcommand);
+
+        try (Connection connection = database.connection()) {
+            UUID actorPlayerId = findActorPlayerId(connection, actorMinecraftUuid);
+            appendAdminAudit(connection, actorPlayerId, normalizedSubcommand, correlationId);
+        } catch (SQLException exception) {
+            throw new PersistenceException("Failed to audit administrative command", exception);
+        }
+    }
+
+    private void appendAdminAudit(
+            Connection connection,
+            UUID actorPlayerId,
+            String subcommand,
+            UUID correlationId
+    ) throws SQLException {
+        auditLog.append(
+                connection,
+                actorPlayerId,
+                "admin.command",
+                correlationId,
+                null,
+                "{\"subcommand\":\"" + normalizeSubcommand(subcommand) + "\"}"
         );
     }
 
