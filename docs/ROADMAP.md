@@ -45,7 +45,7 @@ Exit gate:
 - Economy mutations are auditable and duplication-safe.
 
 ## Phase 3 — First playable loop
-Status: in progress
+Status: complete
 
 Deliverables:
 - Onboarding
@@ -55,8 +55,14 @@ Deliverables:
 - Trading/market baseline
 - Starter objectives/quests
 
-Exit gate:
-- New player can join, understand the objective, claim land, earn currency and complete an initial progression loop without staff intervention.
+Exit gate met:
+- A new player can join, understand the current objective, claim land, earn starter currency and complete a first player-to-player trade without staff intervention.
+- Durable onboarding state drives reconnect guidance.
+- Money settlement is auditable and idempotent.
+- Seller escrow and buyer delivery survive retry/restart without intentionally duplicating money or the escrowed item.
+- Java and Bedrock share the same server-authoritative path.
+
+Freeze receipt: `docs/PHASE3_FREEZE.md`.
 
 ### Phase 3A — Onboarding + first land claim
 Status: complete
@@ -74,6 +80,10 @@ Exit gate met:
 - Repeated joins/claims are idempotent.
 - Restart preserves the onboarding milestone.
 
+Receipt:
+- PR #4 merged at `eab159695157a811abb987e7f8a23e56bf9eac0c`.
+- Final-head CI `41000886983` succeeded.
+
 ### Phase 3B — First skill level + starter currency
 Status: complete
 
@@ -90,9 +100,9 @@ Receipt:
 - Final-head CI `41002439944` succeeded.
 
 ### Phase 3C — First trade / market checkpoint
-Status: in progress
+Status: complete
 
-The market work is split because Bukkit inventory and PostgreSQL do not share a transaction manager. Money settlement is atomic in PostgreSQL; item movement uses a durable recovery state machine.
+The market work is split because Bukkit inventory and PostgreSQL do not share a transaction manager. Money settlement is atomic in PostgreSQL; item movement uses durable recovery state machines.
 
 #### Phase 3C1 — Atomic P2P settlement foundation
 Status: complete
@@ -128,7 +138,7 @@ Receipt:
 - Final-head CI `41013473040` succeeded.
 
 #### Phase 3C2b — Purchase settlement + buyer delivery + first trade
-Status: in progress
+Status: complete
 
 Scope:
 - PostgreSQL V5 `market_purchase` state separate from seller listing state
@@ -141,17 +151,24 @@ Scope:
 - first completed market action records `market_used_at` for both buyer and seller
 - onboarding guidance points directly to `/market list`, `/market buy`, and `/market sell`
 
-Exit gate:
+Exit gate met:
 - A player with onboarding currency can buy one listing without staff intervention.
-- Payment is charged exactly once and seller is credited exactly once.
+- Payment is charged exactly once and seller is credited exactly once under replay.
 - Two concurrent buyers cannot both acquire the same listing.
 - Insufficient funds leaves the listing available and creates no purchase.
-- Crash/retry cannot duplicate the purchased item or charge twice.
+- Paid delivery survives disconnect/restart and reuses the marked item instead of intentionally minting a duplicate.
 - `market_used_at` is written only after completed delivery.
 - Final payment and completion transaction boundaries fail closed under injected audit conflicts.
-- Full Paper/crossplay stack remains green.
+- Full Paper/crossplay stack remains green after merge.
+
+Receipt:
+- PR #8 merged at `8657de3c1116e95f051f04f465d686f8d8c39790`.
+- Final-head CI `41016015451` succeeded.
+- Merge-state CI `41017540269` succeeded.
 
 ## Phase 4 — PvE content
+Status: next
+
 Deliverables:
 - Encounter framework
 - First boss
@@ -161,6 +178,33 @@ Deliverables:
 
 Exit gate:
 - A small party can complete the full PvE loop repeatedly without duplication/data-loss bugs.
+
+### Phase 4A — Encounter Runtime Foundation
+Status: next
+
+Scope:
+- data-driven encounter definition validation
+- durable encounter run identity and lifecycle
+- participant tracking sufficient for later party encounters
+- attempt/completion/failure telemetry
+- restart-safe state handling
+- audit/diagnostic visibility
+- deterministic lifecycle/idempotency tests
+
+Non-goals for 4A:
+- first boss mechanics
+- dungeon layout/content
+- reward economy or loot delivery
+- matchmaking/party system expansion
+- complex GUI tooling
+
+Exit gate:
+- one synthetic encounter definition can start and terminate a durable run deterministically;
+- invalid definitions fail startup/validation closed;
+- duplicate/replayed lifecycle commands cannot create conflicting terminal outcomes;
+- restart preserves unresolved run state and recovery semantics are explicit;
+- run/participant telemetry is queryable and auditable;
+- existing Phase 1–3 integration and full-stack smoke tests remain green.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -227,18 +271,16 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Finish Phase 3C2b and prove the complete first market transaction in CI.
+Implement **Phase 4A — Encounter Runtime Foundation** as a separate reviewable change-set.
 
 Acceptance checklist:
-- V5 migrates on PostgreSQL 18;
-- payment debit + seller credit + durable purchase + listing reservation are one transaction;
-- payment replay returns the original ledger identity and does not move money twice;
-- concurrent buyers serialize so one listing has one buyer;
-- insufficient funds and self-purchase fail before listing ownership changes;
-- buyer delivery marker is durable before `COMPLETED` can commit;
-- completed-delivery recovery strips stale markers without minting a second item;
-- seller recovery preserves foreign buyer delivery markers;
-- `market_used_at` remains null after payment and is written only at completed delivery;
-- injected audit conflicts prove payment/completion rollback boundaries;
-- onboarding guidance exposes the live market objective;
-- all existing economy/onboarding/escrow/crossplay tests remain green.
+- introduce versioned persistence only for durable encounter-run state that truly needs PostgreSQL;
+- define and validate a minimal data-driven encounter schema;
+- create a stable encounter/run identity model;
+- model explicit non-terminal and terminal lifecycle states without ambiguous replay;
+- persist participants and timestamps needed for later multi-player telemetry;
+- define restart behavior for unresolved runs;
+- expose enough diagnostics/audit data to investigate a stuck or conflicting run;
+- add PostgreSQL integration tests for start/replay/terminal transition/restart/concurrency invariants;
+- do not add boss rewards before run lifecycle correctness is proven;
+- keep all existing onboarding/economy/market/crossplay tests green.

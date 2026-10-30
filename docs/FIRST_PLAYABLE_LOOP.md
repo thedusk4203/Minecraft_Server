@@ -1,12 +1,16 @@
 # First playable loop — Phase 3
 
-Phase 3 converts the durable platform into the first self-directed survival progression loop. Changes remain sliced so each dependency and invariant can be reviewed independently.
+Status: **complete / frozen**
+
+Phase 3 converts the durable platform into the first self-directed survival progression loop. The completed loop is frozen at merge SHA `8657de3c1116e95f051f04f465d686f8d8c39790`; merge-state CI `41017540269` passed. Full evidence is recorded in `docs/PHASE3_FREEZE.md`.
 
 ## Phase 3A — onboarding and land safety
 
 Status: complete
 
 The first objective is to claim land with GriefPrevention 16.18.7. GriefPrevention remains authoritative for claim geometry and ownership; core only records the first successful non-cancelled claim as durable onboarding progress.
+
+PR #4 merged at `eab159695157a811abb987e7f8a23e56bf9eac0c`; final-head CI `41000886983` passed.
 
 ## Phase 3B — first skill level and starter currency
 
@@ -22,7 +26,7 @@ Phase 3B merged in PR #5 at `bb28cbf133fc0a4ef203a1147ce9402b440d5249`; final-he
 
 ## Phase 3C — first trade / market
 
-Status: in progress
+Status: complete
 
 Minecraft inventory and PostgreSQL do not share a transaction manager. The market therefore separates two correctness problems:
 
@@ -70,7 +74,7 @@ PR #7 merged at `8ccfa391cdc1ef86194b9795f4fff3066d7d4b41`; final-head CI `41013
 
 ### Phase 3C2b — buyer payment and delivery
 
-Status: in progress
+Status: complete
 
 V5 adds one durable `market_purchase` row per sold listing. Payment and listing reservation share a PostgreSQL transaction:
 
@@ -102,14 +106,16 @@ strip marker
 Player.saveData() best effort
 ```
 
-This ordering handles all important restart windows:
+This ordering handles the important restart windows:
 
-- crash before the item save: delivery remains pending and can safely mint the snapshot later;
+- crash before the item save: delivery remains pending and can safely restore the snapshot later;
 - crash after item save but before DB completion: recovery sees the token and acknowledges the existing item instead of creating another;
 - crash after DB completion but before marker cleanup: recovery strips the stale token;
 - inventory full: the paid purchase remains DELIVERY_PENDING until an empty slot exists.
 
 Seller recovery treats tokens belonging to another listing owner as protected because the token may legitimately be the buyer's delivery marker. Buyer recovery separately verifies `market_purchase.buyer_player_id` before acknowledging or cleaning it.
+
+PR #8 merged at `8657de3c1116e95f051f04f465d686f8d8c39790`; final-head CI `41016015451` and merge-state CI `41017540269` passed.
 
 ## Threading boundary
 
@@ -142,9 +148,9 @@ Guidance comes from durable state:
 - no land claim → create a protected claim;
 - land but no starter currency → level AuraSkills, with `/skills` hint;
 - starter currency but no market milestone → `/market list`, `/market buy <#>`, or `/market sell <price>`;
-- market milestone present → the current onboarding loop is complete.
+- market milestone present → the Phase 3 onboarding loop is complete.
 
-The resulting intended player loop is:
+The frozen player loop is:
 
 ```text
 join
@@ -156,3 +162,7 @@ join
 ```
 
 No staff intervention is required in the normal path; disconnect/restart recovery remains explicit through reconnect handling and `/market recover`.
+
+## Next phase boundary
+
+Phase 4 starts with **4A — Encounter Runtime Foundation**. Phase 4A should prove encounter definition validation, durable run lifecycle, participant tracking and telemetry before the first boss or reward tables are added.
