@@ -45,6 +45,7 @@ services:
       VELOCITY_VERSION: "4.3.1"
       MINECRAFT_VERSION: "26.3"
       MEMORY: "512m"
+      VELOCITY_FORWARDING_SECRET: "minecraft-dev-forwarding-secret-change-me"
       PLUGINS: |
         https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
         https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
