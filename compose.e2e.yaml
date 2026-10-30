@@ -22,6 +22,8 @@ services:
       TYPE: PAPER
       VERSION: "26.3"
       ONLINE_MODE: "FALSE"
+      ENFORCE_SECURE_PROFILE: "FALSE"
+      SPAWN_PROTECTION: "0"
       MEMORY: "3G"
       MOTD: "Minecraft Server Stone Warden E2E"
       ENABLE_RCON: "TRUE"
