@@ -1,0 +1,26 @@
+config-version = "2.9"
+bind = "0.0.0.0:25565"
+motd = "<#55ff99>Minecraft Server Dev"
+show-max-players = 100
+online-mode = true
+force-key-authentication = true
+prevent-client-proxy-connections = false
+player-info-forwarding-mode = "modern"
+forwarding-secret-file = "forwarding.secret"
+announce-forge = false
+kick-existing-players = false
+ping-passthrough = "disabled"
+sample-players-in-ping = false
+enable-player-address-logging = true
+
+[servers]
+survival = "paper:25565"
+try = ["survival"]
+
+[advanced]
+compression-threshold = 256
+compression-level = -1
+login-ratelimit = 3000
+connection-timeout = 5000
+read-timeout = 30000
+haproxy-protocol = false
