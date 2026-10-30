@@ -25,17 +25,20 @@ if (-not (Test-Path ".env")) {
     Set-Content -Path ".env" -Value $envContent -Encoding Ascii
 }
 
-Write-Host "[1/3] Checking Docker..."
+Write-Host "[1/4] Checking Docker..."
 docker info | Out-Null
 
-Write-Host "[2/3] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
+Write-Host "[2/4] Preparing pinned Geyser/Floodgate artifacts..."
+& (Join-Path $PSScriptRoot "fetch-crossplay-plugins.ps1")
+
+Write-Host "[3/4] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
 docker run --rm `
   -v "${repoRoot}:/workspace" `
   -w /workspace `
   gradle:9.8.2-jdk25 `
   gradle clean build --no-daemon
 
-Write-Host "[3/3] Starting PostgreSQL, Paper, Velocity, Geyser and Floodgate..."
+Write-Host "[4/4] Starting PostgreSQL, Paper, Velocity, Geyser and Floodgate..."
 docker compose up -d --wait
 
 docker compose ps
