@@ -25,6 +25,11 @@ import dev.thedusk.minecraftserver.onboarding.PlayerBootstrapListener;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardCodec;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardGuardListener;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardRecoveryListener;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardRepository;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardService;
 import dev.thedusk.minecraftserver.reward.StoneWardenRewardService;
 import java.util.Objects;
 import java.util.UUID;
@@ -45,6 +50,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     private EncounterDefinitionRegistry encounterDefinitions;
     private EncounterRunRepository encounterRuns;
     private StoneWardenRewardService bossRewards;
+    private StoneWardenItemRewardRepository bossItemRewardRepository;
+    private StoneWardenItemRewardService bossItemRewards;
     private StoneWardenBossManager bossManager;
     private BukkitTask bossRewardReconcileTask;
     private final AtomicBoolean bossRewardReconcileInFlight = new AtomicBoolean();
@@ -73,6 +80,17 @@ public final class MinecraftServerCore extends JavaPlugin {
             );
             bossRewards = new StoneWardenRewardService(database, auditLog, economy);
             int reconciledBossRewardRuns = bossRewards.reconcileCompletedPending();
+            bossItemRewardRepository = new StoneWardenItemRewardRepository(database, auditLog);
+            int reconciledBossItemIntents = bossItemRewardRepository.prepareEligibleIntents(UUID.randomUUID());
+            StoneWardenItemRewardCodec bossItemRewardCodec = new StoneWardenItemRewardCodec(this);
+            bossItemRewards = new StoneWardenItemRewardService(
+                    this,
+                    identities,
+                    bossItemRewardRepository,
+                    persistenceExecutor,
+                    bossItemRewardCodec,
+                    getLogger()
+            );
             bossManager = new StoneWardenBossManager(
                     this,
                     identities,
@@ -148,6 +166,14 @@ public final class MinecraftServerCore extends JavaPlugin {
                     new MarketRecoveryListener(this, marketEscrow, marketPurchases),
                     this
             );
+            getServer().getPluginManager().registerEvents(
+                    new StoneWardenItemRewardGuardListener(bossItemRewardCodec),
+                    this
+            );
+            getServer().getPluginManager().registerEvents(
+                    new StoneWardenItemRewardRecoveryListener(this, bossItemRewards),
+                    this
+            );
             getServer().getPluginManager().registerEvents(bossManager, this);
 
             configureAdminCommand(diagnostics);
@@ -164,6 +190,7 @@ public final class MinecraftServerCore extends JavaPlugin {
                             + "; recoveredEncounterRuns=" + recoveredEncounterRuns
                             + "; recoveryCorrelation=" + encounterRecoveryCorrelationId
                             + "; reconciledBossRewardRuns=" + reconciledBossRewardRuns
+                            + "; reconciledBossItemIntents=" + reconciledBossItemIntents
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -203,7 +230,8 @@ public final class MinecraftServerCore extends JavaPlugin {
                 "boss command must be declared in plugin.yml"
         );
         command.setExecutor(new BossCommandHandler(
-                Objects.requireNonNull(bossManager, "bossManager")
+                Objects.requireNonNull(bossManager, "bossManager"),
+                Objects.requireNonNull(bossItemRewards, "bossItemRewards")
         ));
     }
 
@@ -211,14 +239,19 @@ public final class MinecraftServerCore extends JavaPlugin {
         bossRewardReconcileTask = getServer().getScheduler().runTaskTimer(
                 this,
                 () -> {
-                    StoneWardenRewardService rewards = bossRewards;
+                    StoneWardenRewardService currencyRewards = bossRewards;
+                    StoneWardenItemRewardRepository itemRewards = bossItemRewardRepository;
                     PersistenceExecutor executor = persistenceExecutor;
-                    if (rewards == null || executor == null
+                    if (currencyRewards == null || itemRewards == null || executor == null
                             || !bossRewardReconcileInFlight.compareAndSet(false, true)) {
                         return;
                     }
-                    executor.submit(rewards::reconcileCompletedPending)
-                            .whenComplete((count, failure) -> {
+                    executor.submit(() -> {
+                                int runs = currencyRewards.reconcileCompletedPending();
+                                int itemIntents = itemRewards.prepareEligibleIntents(UUID.randomUUID());
+                                return new RewardReconcileResult(runs, itemIntents);
+                            })
+                            .whenComplete((result, failure) -> {
                                 bossRewardReconcileInFlight.set(false);
                                 if (failure != null) {
                                     getLogger().log(
@@ -228,10 +261,15 @@ public final class MinecraftServerCore extends JavaPlugin {
                                     );
                                     return;
                                 }
-                                if (count != null && count > 0) {
+                                if (result != null && (result.runs() > 0 || result.itemIntents() > 0)) {
                                     getLogger().info(
-                                            "BOSS_REWARD_TELEMETRY event=reconciled runs=" + count
+                                            "BOSS_REWARD_TELEMETRY event=reconciled runs=" + result.runs()
+                                                    + " itemIntents=" + result.itemIntents()
                                     );
+                                }
+                                StoneWardenItemRewardService delivery = bossItemRewards;
+                                if (delivery != null && isEnabled()) {
+                                    getServer().getScheduler().runTask(this, delivery::recoverOnlinePlayers);
                                 }
                             });
                 },
@@ -260,6 +298,8 @@ public final class MinecraftServerCore extends JavaPlugin {
             activeBossManager.close();
         }
 
+        bossItemRewards = null;
+        bossItemRewardRepository = null;
         bossRewards = null;
         encounterRuns = null;
         encounterDefinitions = null;
@@ -281,5 +321,8 @@ public final class MinecraftServerCore extends JavaPlugin {
         identities = null;
         onboarding = null;
         economy = null;
+    }
+
+    private record RewardReconcileResult(int runs, int itemIntents) {
     }
 }

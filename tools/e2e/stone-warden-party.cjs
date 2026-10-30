@@ -65,6 +65,10 @@ function isIronGolem(entity) {
   return name === 'iron_golem' || name === 'irongolem' || displayName.includes('iron golem');
 }
 
+function hasStoneWardenShard(tracked) {
+  return tracked.bot.inventory.items().some((item) => item.name === 'amethyst_shard');
+}
+
 function horizontalDistance(first, second) {
   const dx = first.x - second.x;
   const dz = first.z - second.z;
@@ -169,10 +173,6 @@ async function convergePartyClients(leader, mate) {
     return true;
   }
 
-  // Prefer moving the higher client toward the lower client. Fresh-world spawn
-  // terrain can put one bot several blocks above the other; forcing the lower bot
-  // uphill made this gate flaky even though both clients were healthy and nearby.
-  // The fallback reverses direction if local terrain still blocks the first mover.
   const leaderHigher = leader.bot.entity.position.y >= mate.bot.entity.position.y;
   const attempts = leaderHigher
     ? [[leader, mate], [mate, leader]]
@@ -220,9 +220,6 @@ async function main() {
     await awaitSpawn(mate);
     console.log(`Party bots spawned: ${LEADER_NAME}, ${MATE_NAME} via ${BOT_VERSION} -> ViaProxy -> Paper 26.3`);
 
-    // Fresh-world terrain can place the two clients just outside the encounter's
-    // 12-block party-start boundary. Converge using only client-authored movement;
-    // do not use RCON teleport, which would weaken the network E2E contract.
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
       throw new Error(
@@ -276,9 +273,6 @@ async function main() {
     assertConnected(mate, 'after party mechanic window');
     console.log('Both party clients remained connected through the mechanic window.');
 
-    // Keep the mate present and bound while the leader drives the terminal damage.
-    // This validates the multi-participant run without making completion depend on
-    // attack scheduling from two automation clients at exactly the same tick.
     rcon(`effect give ${LEADER_NAME} minecraft:strength 60 20 true`);
 
     const killDeadline = Date.now() + 35_000;
@@ -289,7 +283,14 @@ async function main() {
       const status = rcon('boss status');
       if (status.includes('No active Stone Warden encounter.')) {
         console.log('Party Stone Warden runtime reports no active encounter after client attacks.');
-        await sleep(1_000);
+        await waitFor(
+          'Stone Warden Shard in both real client inventories',
+          () => hasStoneWardenShard(leader) && hasStoneWardenShard(mate),
+          15_000,
+          250
+        );
+        console.log('Stone Warden Shard observed in both party client inventories.');
+        await sleep(500);
         return;
       }
 

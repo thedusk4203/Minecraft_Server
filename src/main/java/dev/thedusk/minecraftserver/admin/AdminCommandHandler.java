@@ -156,6 +156,14 @@ public final class AdminCommandHandler implements CommandExecutor {
                             + snapshot.encounterRuns()
                             + " | activeEncounterRuns="
                             + snapshot.activeEncounterRuns()
+                            + " | encounterRewards="
+                            + snapshot.encounterRewards()
+                            + " | pendingEncounterRewards="
+                            + snapshot.pendingEncounterRewards()
+                            + " | encounterRewardItems="
+                            + snapshot.encounterRewardItems()
+                            + " | pendingEncounterRewardItems="
+                            + snapshot.pendingEncounterRewardItems()
                             + " | auditEvents="
                             + snapshot.auditEvents()
                             + " | pool(active/idle)="
