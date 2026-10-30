@@ -42,6 +42,13 @@ public final class OnboardingProgressRepository {
               AND first_currency_earned_at IS NULL
             """;
 
+    private static final String MARK_MARKET_USED_SQL = """
+            UPDATE player_onboarding
+            SET market_used_at = NOW(), updated_at = NOW()
+            WHERE player_id = ?
+              AND market_used_at IS NULL
+            """;
+
     private static final String FIND_SQL = """
             SELECT player_id, started_at, land_claimed_at,
                    first_skill_level_at, first_skill_id, first_skill_level,
@@ -137,6 +144,21 @@ public final class OnboardingProgressRepository {
 
     boolean markFirstCurrencyEarned(Connection connection, UUID playerId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(MARK_FIRST_CURRENCY_SQL)) {
+            statement.setObject(1, playerId);
+            return statement.executeUpdate() == 1;
+        }
+    }
+
+    public boolean markMarketUsedInTransaction(Connection connection, UUID playerId) throws SQLException {
+        Objects.requireNonNull(connection, "connection");
+        Objects.requireNonNull(playerId, "playerId");
+        if (connection.getAutoCommit()) {
+            throw new IllegalArgumentException(
+                    "markMarketUsedInTransaction requires a caller-owned transaction with autoCommit=false"
+            );
+        }
+        ensureStarted(connection, playerId);
+        try (PreparedStatement statement = connection.prepareStatement(MARK_MARKET_USED_SQL)) {
             statement.setObject(1, playerId);
             return statement.executeUpdate() == 1;
         }
