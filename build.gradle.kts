@@ -4,17 +4,23 @@ plugins {
 }
 
 group = "dev.thedusk.minecraft"
-version = "0.2.0-SNAPSHOT"
+version = "0.3.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/") {
         name = "papermc"
     }
+    maven("https://jitpack.io") {
+        name = "jitpack"
+    }
 }
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.3.build.218-stable")
+    compileOnly("com.github.GriefPrevention:GriefPrevention:16.18.7") {
+        isTransitive = false
+    }
 
     implementation("com.zaxxer:HikariCP:7.1.0")
     implementation("org.postgresql:postgresql:42.7.14")
