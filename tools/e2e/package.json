@@ -1,0 +1,13 @@
+{
+  "name": "minecraft-server-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ephemeral real-client verification harness for Minecraft_Server",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "mineflayer": "4.39.0"
+  }
+}

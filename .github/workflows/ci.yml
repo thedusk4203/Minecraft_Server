@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-and-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       FORWARDING_SECRET: ci-forwarding-secret-ephemeral-only
       POSTGRES_PASSWORD: ci-postgres-password-ephemeral-only
@@ -114,3 +114,62 @@ jobs:
       - name: Stop local stack
         if: always()
         run: docker compose down -v
+
+      - name: Set up Node 24 for real-client E2E
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install pinned E2E client dependency
+        run: npm install --prefix tools/e2e --ignore-scripts --no-audit --no-fund
+
+      - name: Validate E2E Compose configuration
+        run: docker compose -f compose.e2e.yaml config --quiet
+
+      - name: Start isolated Paper E2E stack
+        run: docker compose -f compose.e2e.yaml up -d --wait --wait-timeout 300
+
+      - name: Start pinned ViaProxy 26.3 translation bridge
+        run: bash tools/e2e/start-viaproxy.sh
+
+      - name: Run Stone Warden real-client combat E2E
+        run: node tools/e2e/stone-warden.cjs
+
+      - name: Verify Stone Warden durable completion and mechanics
+        run: |
+          status=""
+          for _ in $(seq 1 40); do
+            status="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT status FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1")"
+            if [[ "$status" == "COMPLETED" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable Stone Warden status: $status"
+          test "$status" = "COMPLETED"
+
+          logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=started'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=slam_telegraph'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=charge_telegraph'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
+
+      - name: Show E2E logs on failure
+        if: failure()
+        run: |
+          docker compose -f compose.e2e.yaml logs --tail=400 || true
+          work_dir="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
+          if [[ -f "$work_dir/viaproxy.log" ]]; then
+            echo '--- ViaProxy log ---'
+            tail -300 "$work_dir/viaproxy.log"
+          fi
+
+      - name: Stop E2E stack and ViaProxy
+        if: always()
+        run: |
+          work_dir="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
+          if [[ -f "$work_dir/viaproxy.pid" ]]; then
+            kill "$(cat "$work_dir/viaproxy.pid")" 2>/dev/null || true
+          fi
+          docker compose -f compose.e2e.yaml down -v || true
