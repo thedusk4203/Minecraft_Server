@@ -67,6 +67,24 @@ function assertConnected(bot, kicked, context) {
   }
 }
 
+function installClientTickEndCompatibility(bot) {
+  // Minecraft 26.3 rejects a second position-bearing packet unless the client
+  // closes the preceding client tick with client_tick_end. Mineflayer 4.39.0's
+  // published release predates that send path even though the 26.1 protocol
+  // definition already contains tick_end. Keep the compatibility shim isolated
+  // to this CI client until a release containing the upstream fix is pinned.
+  const originalWrite = bot._client.write.bind(bot._client);
+  const movementPackets = new Set(['position', 'position_look', 'look', 'flying']);
+
+  bot._client.write = (name, packet) => {
+    const result = originalWrite(name, packet);
+    if (movementPackets.has(name)) {
+      originalWrite('tick_end', {});
+    }
+    return result;
+  };
+}
+
 async function walkToward(bot, kicked, targetPosition, stopDistance, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   bot.setControlState('sprint', true);
@@ -107,6 +125,7 @@ async function main() {
     auth: 'offline',
     hideErrors: false
   });
+  installClientTickEndCompatibility(bot);
 
   let kickedReason = null;
   const kicked = () => kickedReason;
@@ -151,10 +170,10 @@ async function main() {
 
   console.log(`Stone Warden entity observed: id=${boss.id}`);
 
-  // Let both telegraphed mechanics execute. If knockback pushes the client toward
-  // the arena boundary, walk back using normal Mineflayer movement packets; never
-  // RCON-teleport a connected protocol-translated client.
-  const mechanicDeadline = Date.now() + 9_000;
+  // The normal first slam telegraph begins around tick 180 (~9 s) and the first
+  // charge around tick 240 (~12 s). Observe long enough for both telegraphs and
+  // their executions while keeping any recovery movement client-authored.
+  const mechanicDeadline = Date.now() + 16_000;
   while (Date.now() < mechanicDeadline) {
     assertConnected(bot, kicked, 'during mechanic verification');
     const displacedHorizontally = horizontalDistance(bot.entity.position, start) > 10;
