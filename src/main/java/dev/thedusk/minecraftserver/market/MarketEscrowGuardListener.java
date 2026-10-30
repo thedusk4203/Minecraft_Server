@@ -12,6 +12,7 @@ import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerItemDamageEvent;
@@ -66,6 +67,14 @@ public final class MarketEscrowGuardListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInteract(PlayerInteractEvent event) {
         if (codec.isMarked(event.getItem())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onInteractEntity(PlayerInteractEntityEvent event) {
+        ItemStack used = event.getPlayer().getInventory().getItem(event.getHand());
+        if (codec.isMarked(used)) {
             event.setCancelled(true);
         }
     }
