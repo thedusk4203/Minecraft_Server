@@ -89,7 +89,7 @@ class MarketPurchaseRepositoryIntegrationTest {
         assertEquals(buyer.playerId(), result.purchase().buyerPlayerId());
         assertEquals(25L, economy.balance(buyer.playerId(), "COINS"));
         assertEquals(75L, economy.balance(seller.playerId(), "COINS"));
-        assertEquals(3L, countRows("economy_transaction")); // seed + debit + credit
+        assertEquals(3L, countRows("economy_transaction"));
         assertEquals(1L, countRows("market_purchase"));
         assertEquals(1L, countAudit("market.purchase_paid"));
         assertNull(onboarding.find(buyer.playerId()).orElseThrow().marketUsedAt());
@@ -208,8 +208,8 @@ class MarketPurchaseRepositoryIntegrationTest {
 
     @Test
     void restartPreservesPaidDeliveryPendingStateAndBalances() {
-        PlayerIdentity seller = player("RestartSellerPurchase");
-        PlayerIdentity buyer = player("RestartBuyerPurchase");
+        PlayerIdentity seller = player("RestartSeller");
+        PlayerIdentity buyer = player("RestartBuyer");
         MarketListing listed = listed(seller, 65L);
         credit(buyer, 100L, "restart-purchase-seed");
         MarketPurchaseResult paid = purchases.purchase(
