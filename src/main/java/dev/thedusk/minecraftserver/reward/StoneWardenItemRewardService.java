@@ -151,6 +151,18 @@ public final class StoneWardenItemRewardService {
         }
 
         StoneWardenItemReward row = rows.get(index);
+        UUID foreignHolder = findForeignOnlineHolder(minecraftUuid, row.deliveryToken());
+        if (foreignHolder != null) {
+            deliveryConflict(
+                    minecraftUuid,
+                    row.deliveryToken(),
+                    "reward marker present in foreign online inventory " + foreignHolder,
+                    notify
+            );
+            processRows(minecraftUuid, rows, index + 1, notify);
+            return;
+        }
+
         int tokenCount = countToken(player.getInventory(), row.deliveryToken());
         if (tokenCount > 1) {
             deliveryConflict(minecraftUuid, row.deliveryToken(), "duplicate reward delivery markers", notify);
@@ -217,6 +229,18 @@ public final class StoneWardenItemRewardService {
             return;
         }
         if (row.status() != StoneWardenItemRewardStatus.DELIVERY_PENDING) {
+            processRows(minecraftUuid, rows, index + 1, notify);
+            return;
+        }
+
+        UUID foreignHolder = findForeignOnlineHolder(minecraftUuid, row.deliveryToken());
+        if (foreignHolder != null) {
+            deliveryConflict(
+                    minecraftUuid,
+                    row.deliveryToken(),
+                    "reward marker present in foreign online inventory " + foreignHolder,
+                    notify
+            );
             processRows(minecraftUuid, rows, index + 1, notify);
             return;
         }
@@ -302,6 +326,17 @@ public final class StoneWardenItemRewardService {
     }
 
     private void cleanupDeliveredMarker(Player player, StoneWardenItemReward row, boolean notify) {
+        UUID foreignHolder = findForeignOnlineHolder(player.getUniqueId(), row.deliveryToken());
+        if (foreignHolder != null) {
+            deliveryConflict(
+                    player.getUniqueId(),
+                    row.deliveryToken(),
+                    "delivered marker present in foreign online inventory " + foreignHolder,
+                    notify
+            );
+            return;
+        }
+
         int tokenCount = countToken(player.getInventory(), row.deliveryToken());
         if (tokenCount > 1) {
             deliveryConflict(player.getUniqueId(), row.deliveryToken(),
@@ -322,6 +357,16 @@ public final class StoneWardenItemRewardService {
             bestEffortSave(player, "persist stripped Stone Warden reward marker");
             logger.info("BOSS_REWARD_TELEMETRY event=item_marker_cleaned reward=" + row.rewardId());
         }
+    }
+
+    private UUID findForeignOnlineHolder(UUID ownerMinecraftUuid, UUID token) {
+        for (Player online : plugin.getServer().getOnlinePlayers()) {
+            if (!online.getUniqueId().equals(ownerMinecraftUuid)
+                    && countToken(online.getInventory(), token) > 0) {
+                return online.getUniqueId();
+            }
+        }
+        return null;
     }
 
     private Map<UUID, Integer> collectTokenCounts(PlayerInventory inventory) {
