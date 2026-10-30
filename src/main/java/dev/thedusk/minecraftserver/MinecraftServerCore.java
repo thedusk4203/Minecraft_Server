@@ -4,8 +4,10 @@ import dev.thedusk.minecraftserver.admin.AdminCommandHandler;
 import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
-import dev.thedusk.minecraftserver.identity.PlayerIdentityListener;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
+import dev.thedusk.minecraftserver.onboarding.LandClaimOnboardingListener;
+import dev.thedusk.minecraftserver.onboarding.OnboardingProgressRepository;
+import dev.thedusk.minecraftserver.onboarding.PlayerBootstrapListener;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
@@ -18,6 +20,7 @@ public final class MinecraftServerCore extends JavaPlugin {
     private DatabaseManager database;
     private PersistenceExecutor persistenceExecutor;
     private PlayerIdentityRepository identities;
+    private OnboardingProgressRepository onboarding;
     private EconomyLedger economy;
 
     @Override
@@ -26,13 +29,30 @@ public final class MinecraftServerCore extends JavaPlugin {
             database = DatabaseManager.open(DatabaseSettings.fromEnvironment(System.getenv()));
             persistenceExecutor = new PersistenceExecutor();
             identities = new PlayerIdentityRepository(database);
+            onboarding = new OnboardingProgressRepository(database);
 
             AuditLog auditLog = new AuditLog();
             economy = new EconomyLedger(database, auditLog);
             AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
 
             getServer().getPluginManager().registerEvents(
-                    new PlayerIdentityListener(identities, persistenceExecutor, getLogger()),
+                    new PlayerBootstrapListener(
+                            this,
+                            identities,
+                            onboarding,
+                            persistenceExecutor,
+                            getLogger()
+                    ),
+                    this
+            );
+            getServer().getPluginManager().registerEvents(
+                    new LandClaimOnboardingListener(
+                            this,
+                            identities,
+                            onboarding,
+                            persistenceExecutor,
+                            getLogger()
+                    ),
                     this
             );
             configureAdminCommand(diagnostics);
@@ -40,7 +60,7 @@ public final class MinecraftServerCore extends JavaPlugin {
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
-                            + " with PostgreSQL persistence"
+                            + " with PostgreSQL persistence and onboarding"
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -83,6 +103,7 @@ public final class MinecraftServerCore extends JavaPlugin {
         }
 
         identities = null;
+        onboarding = null;
         economy = null;
     }
 }

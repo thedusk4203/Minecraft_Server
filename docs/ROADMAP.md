@@ -1,7 +1,7 @@
 # Roadmap — MVP v0.1
 
 ## Phase 0 — Product foundation
-Status: in progress
+Status: complete
 
 Deliverables:
 - Product specification
@@ -14,6 +14,8 @@ Exit gate:
 - Scope is narrow enough that an implementation agent can work without inventing product direction.
 
 ## Phase 1 — Local technical skeleton
+Status: complete
+
 Deliverables:
 - Repository layout
 - Paper-compatible plugin project
@@ -28,6 +30,8 @@ Exit gate:
 - Java and Bedrock test clients can join.
 
 ## Phase 2 — Core platform
+Status: complete
+
 Deliverables:
 - Player identity abstraction
 - Persistence layer and migrations
@@ -41,6 +45,8 @@ Exit gate:
 - Economy mutations are auditable and duplication-safe.
 
 ## Phase 3 — First playable loop
+Status: in progress
+
 Deliverables:
 - Onboarding
 - Land protection integration
@@ -51,6 +57,23 @@ Deliverables:
 
 Exit gate:
 - New player can join, understand the objective, claim land, earn currency and complete an initial progression loop without staff intervention.
+
+### Phase 3A — Onboarding + first land claim
+Status: in progress
+
+Scope:
+- durable onboarding progress tied to internal `player_id`
+- first-join objective guidance
+- GriefPrevention integration pinned to a production-compatible release
+- first successful claim recorded as a durable milestone
+- onboarding state survives restart/reconnect
+- CI proves the land-protection plugin loads with the core stack
+
+Exit gate:
+- A new player receives the first objective without staff intervention.
+- Creating the first non-cancelled GriefPrevention claim records `land_claimed_at` exactly once.
+- Repeated joins/claims are idempotent.
+- Restart preserves the onboarding milestone.
 
 ## Phase 4 — PvE content
 Deliverables:
@@ -128,13 +151,12 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Create the local technical skeleton in Phase 1.
+Finish Phase 3A: onboarding and first land-claim milestone.
 
-Acceptance checklist for that task:
-- Gradle or Maven build selected and documented.
-- Current supported Java version pinned.
-- Paper-compatible plugin loads successfully.
-- Test server startup scripted.
-- PostgreSQL development service reproducible.
-- CI compiles and runs tests.
-- No secrets committed.
+Acceptance checklist:
+- `V2__onboarding_progress.sql` migrates on PostgreSQL 18.
+- Join bootstrap persists identity + onboarding without blocking the Minecraft main thread.
+- GriefPrevention 16.18.7 is pinned and loads in the Paper stack.
+- First claim milestone is durable and idempotent.
+- Integration tests cover start, claim replay and restart persistence.
+- Full-stack CI remains green.

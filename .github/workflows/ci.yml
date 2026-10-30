@@ -58,6 +58,12 @@ jobs:
           echo "$health"
           echo "$health" | grep -q 'db=UP'
 
+      - name: Check land protection plugin
+        run: |
+          plugins="$(docker compose exec -T paper rcon-cli 'plugins')"
+          echo "$plugins"
+          echo "$plugins" | grep -qi 'GriefPrevention'
+
       - name: Check crossplay proxy plugins
         run: |
           docker compose exec -T velocity sh -ec '
