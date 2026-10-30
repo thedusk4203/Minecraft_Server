@@ -18,17 +18,20 @@ if [[ ! -f .env ]]; then
   chmod 600 .env
 fi
 
-echo "[1/3] Checking Docker..."
+echo "[1/4] Checking Docker..."
 docker info >/dev/null
 
-echo "[2/3] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
+echo "[2/4] Preparing pinned Geyser/Floodgate artifacts..."
+bash "$REPO_ROOT/scripts/fetch-crossplay-plugins.sh"
+
+echo "[3/4] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
 docker run --rm \
   -v "$REPO_ROOT:/workspace" \
   -w /workspace \
   gradle:9.8.2-jdk25 \
   gradle clean build --no-daemon
 
-echo "[3/3] Starting PostgreSQL, Paper, Velocity, Geyser and Floodgate..."
+echo "[4/4] Starting PostgreSQL, Paper, Velocity, Geyser and Floodgate..."
 docker compose up -d --wait
 
 docker compose ps
