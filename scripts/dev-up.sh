@@ -21,15 +21,15 @@ fi
 echo "[1/4] Checking Docker..."
 docker info >/dev/null
 
-echo "[2/4] Preparing pinned Geyser/Floodgate artifacts..."
-bash "$REPO_ROOT/scripts/fetch-crossplay-plugins.sh"
-
-echo "[3/4] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
+echo "[2/4] Building MinecraftServerCore with Gradle 9.8.2 / JDK 25..."
 docker run --rm \
   -v "$REPO_ROOT:/workspace" \
   -w /workspace \
   gradle:9.8.2-jdk25 \
   gradle clean build --no-daemon
+
+echo "[3/4] Preparing pinned Geyser/Floodgate artifacts..."
+bash "$REPO_ROOT/scripts/fetch-crossplay-plugins.sh"
 
 echo "[4/4] Starting PostgreSQL, Paper, Velocity, Geyser and Floodgate..."
 docker compose up -d --wait
