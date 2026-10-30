@@ -8,7 +8,7 @@ api-version: '26.3'
 commands:
   mcserver:
     description: Administrative health and diagnostics command.
-    usage: /mcserver health
+    usage: /mcserver <health|diagnostics>
     permission: minecraftserver.admin
 
 permissions:
