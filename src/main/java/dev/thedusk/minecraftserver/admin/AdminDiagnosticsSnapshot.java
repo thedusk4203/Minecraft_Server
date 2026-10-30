@@ -5,6 +5,8 @@ public record AdminDiagnosticsSnapshot(
         long economyAccounts,
         long economyTransactions,
         long auditEvents,
+        long encounterRuns,
+        long activeEncounterRuns,
         int activeConnections,
         int idleConnections
 ) {

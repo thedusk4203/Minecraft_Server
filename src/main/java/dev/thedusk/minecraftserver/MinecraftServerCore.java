@@ -4,6 +4,8 @@ import dev.thedusk.minecraftserver.admin.AdminCommandHandler;
 import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
+import dev.thedusk.minecraftserver.encounter.EncounterDefinitionRegistry;
+import dev.thedusk.minecraftserver.encounter.EncounterRunRepository;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.market.MarketCommandHandler;
 import dev.thedusk.minecraftserver.market.MarketEscrowGuardListener;
@@ -22,6 +24,7 @@ import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.logging.Level;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -34,6 +37,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     private EconomyLedger economy;
     private MarketEscrowService marketEscrow;
     private MarketPurchaseService marketPurchases;
+    private EncounterDefinitionRegistry encounterDefinitions;
+    private EncounterRunRepository encounterRuns;
 
     @Override
     public void onEnable() {
@@ -50,6 +55,14 @@ public final class MinecraftServerCore extends JavaPlugin {
                     onboarding,
                     economy
             );
+
+            encounterDefinitions = EncounterDefinitionRegistry.load(getClass().getClassLoader());
+            encounterRuns = new EncounterRunRepository(database, auditLog);
+            UUID encounterRecoveryCorrelationId = UUID.randomUUID();
+            int recoveredEncounterRuns = encounterRuns.recoverInterruptedRuns(
+                    encounterRecoveryCorrelationId
+            );
+
             AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
 
             MarketListingRepository marketListings = new MarketListingRepository(database, auditLog);
@@ -123,7 +136,10 @@ public final class MinecraftServerCore extends JavaPlugin {
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
-                            + " with PostgreSQL persistence, onboarding, land protection, AuraSkills and durable market"
+                            + " with PostgreSQL persistence, onboarding, land protection, AuraSkills, durable market"
+                            + " and " + encounterDefinitions.size() + " validated encounter definition(s)"
+                            + "; recoveredEncounterRuns=" + recoveredEncounterRuns
+                            + "; recoveryCorrelation=" + encounterRecoveryCorrelationId
             );
         } catch (RuntimeException exception) {
             closeResources();
@@ -164,6 +180,8 @@ public final class MinecraftServerCore extends JavaPlugin {
     }
 
     private void closeResources() {
+        encounterRuns = null;
+        encounterDefinitions = null;
         marketPurchases = null;
         marketEscrow = null;
 

@@ -43,6 +43,16 @@ jobs:
       - name: Build core plugin and unit tests
         run: gradle clean build --no-daemon
 
+      - name: Verify shaded runtime resources
+        run: |
+          plugin_jar="$(find build/libs -maxdepth 1 -type f -name 'minecraft-server-core-*.jar' -print -quit)"
+          test -n "$plugin_jar"
+          echo "Checking runtime resources in $plugin_jar"
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V1__core_platform.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
+          jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
+          jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
+
       - name: Run PostgreSQL integration tests
         run: gradle integrationTest --no-daemon
 
@@ -57,6 +67,13 @@ jobs:
           health="$(docker compose exec -T paper rcon-cli 'mcserver health')"
           echo "$health"
           echo "$health" | grep -q 'db=UP'
+
+      - name: Check encounter runtime foundation
+        run: |
+          table_exists="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
+          echo "encounter_run table exists: $table_exists"
+          echo "$table_exists" | grep -qx 't'
+          docker compose logs paper | grep -q 'validated encounter definition(s)'
 
       - name: Check gameplay dependencies
         run: |

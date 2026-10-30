@@ -17,7 +17,9 @@ public final class AdminDiagnosticsService {
                 (SELECT COUNT(*) FROM player_identity) AS known_players,
                 (SELECT COUNT(*) FROM economy_account) AS economy_accounts,
                 (SELECT COUNT(*) FROM economy_transaction) AS economy_transactions,
-                (SELECT COUNT(*) FROM audit_event) AS audit_events
+                (SELECT COUNT(*) FROM audit_event) AS audit_events,
+                (SELECT COUNT(*) FROM encounter_run) AS encounter_runs,
+                (SELECT COUNT(*) FROM encounter_run WHERE status = 'ACTIVE') AS active_encounter_runs
             """;
 
     private static final String ACTOR_SQL = """
@@ -61,6 +63,8 @@ public final class AdminDiagnosticsService {
                 counts.economyAccounts(),
                 counts.economyTransactions(),
                 counts.auditEvents(),
+                counts.encounterRuns(),
+                counts.activeEncounterRuns(),
                 database.activeConnections(),
                 database.idleConnections()
         );
@@ -108,7 +112,9 @@ public final class AdminDiagnosticsService {
                     result.getLong("known_players"),
                     result.getLong("economy_accounts"),
                     result.getLong("economy_transactions"),
-                    result.getLong("audit_events")
+                    result.getLong("audit_events"),
+                    result.getLong("encounter_runs"),
+                    result.getLong("active_encounter_runs")
             );
         }
     }
@@ -147,7 +153,9 @@ public final class AdminDiagnosticsService {
             long knownPlayers,
             long economyAccounts,
             long economyTransactions,
-            long auditEvents
+            long auditEvents,
+            long encounterRuns,
+            long activeEncounterRuns
     ) {
     }
 }
