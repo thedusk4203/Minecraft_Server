@@ -10,6 +10,7 @@ GEYSER_EXPECTED_SHA512="02559b2aeaacbb7a0916c1e9b830fffd4638f22d79852c854fc258fb
 GEYSER_METADATA_URL="https://api.modrinth.com/v2/project/${GEYSER_PROJECT_ID}/version?loaders=%5B%22velocity%22%5D&game_versions=%5B%2226.3%22%5D"
 
 FLOODGATE_VERSION="2.2.5"
+FLOODGATE_SOURCE_VERSION="2.2.5-SNAPSHOT"
 FLOODGATE_BUILD="141"
 FLOODGATE_COMMIT="81b65ccb766bf8024858ebf3eefa6974056aecc5"
 FLOODGATE_SOURCE_URL="https://github.com/GeyserMC/Floodgate/archive/${FLOODGATE_COMMIT}.tar.gz"
@@ -138,8 +139,8 @@ build_floodgate() (
 
   local source_version
   source_version="$(sed -n 's/^version=//p' "$source_dir/gradle.properties" | head -n 1)"
-  if [[ "$source_version" != "$FLOODGATE_VERSION" ]]; then
-    echo "Floodgate source version mismatch; expected $FLOODGATE_VERSION, got $source_version" >&2
+  if [[ "$source_version" != "$FLOODGATE_SOURCE_VERSION" ]]; then
+    echo "Floodgate source version mismatch; expected $FLOODGATE_SOURCE_VERSION, got $source_version" >&2
     exit 1
   fi
 
@@ -166,7 +167,8 @@ build_floodgate() (
   {
     echo "source=https://github.com/GeyserMC/Floodgate"
     echo "commit=$FLOODGATE_COMMIT"
-    echo "version=$FLOODGATE_VERSION"
+    echo "source_version=$FLOODGATE_SOURCE_VERSION"
+    echo "runtime_version=$FLOODGATE_VERSION"
     echo "build=$FLOODGATE_BUILD"
     echo "sha256=$built_sha"
   } > "$provenance_file"
