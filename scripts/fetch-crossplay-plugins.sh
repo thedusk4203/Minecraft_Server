@@ -13,8 +13,10 @@ FLOODGATE_VERSION="2.2.5"
 FLOODGATE_SOURCE_VERSION="2.2.5-SNAPSHOT"
 FLOODGATE_BUILD="141"
 FLOODGATE_COMMIT="81b65ccb766bf8024858ebf3eefa6974056aecc5"
-FLOODGATE_SOURCE_URL="https://github.com/GeyserMC/Floodgate/archive/${FLOODGATE_COMMIT}.tar.gz"
+FLOODGATE_REPO_URL="https://github.com/GeyserMC/Floodgate.git"
 FLOODGATE_GRADLE_IMAGE="gradle:7.6-jdk17"
+FLOODGATE_RECIPE="git-recursive-full-build-v1"
+FLOODGATE_EXPECTED_DESCRIPTOR_VERSION="2.2.5-SNAPSHOT (b141-81b65cc)"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -27,7 +29,7 @@ require_command() {
 
 require_command curl
 require_command python3
-require_command tar
+require_command git
 require_command docker
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -53,6 +55,39 @@ curl_retry() {
     --retry 4 --retry-all-errors --connect-timeout 20 \
     -H 'User-Agent: thedusk4203/Minecraft_Server crossplay bootstrap' \
     "$@"
+}
+
+verify_velocity_descriptor() {
+  local jar_file="$1"
+  local expected_id="$2"
+  local expected_main="$3"
+  local expected_version="${4:-}"
+
+  python3 - "$jar_file" "$expected_id" "$expected_main" "$expected_version" <<'PY'
+import json
+import sys
+import zipfile
+
+jar_path, expected_id, expected_main, expected_version = sys.argv[1:]
+with zipfile.ZipFile(jar_path) as archive:
+    try:
+        raw = archive.read("velocity-plugin.json")
+    except KeyError as exc:
+        raise SystemExit("velocity-plugin.json is missing from plugin jar") from exc
+    names = set(archive.namelist())
+
+data = json.loads(raw.decode("utf-8"))
+if data.get("id") != expected_id:
+    raise SystemExit(f"Velocity plugin id mismatch: expected {expected_id}, got {data.get('id')}")
+if data.get("main") != expected_main:
+    raise SystemExit(f"Velocity plugin main mismatch: expected {expected_main}, got {data.get('main')}")
+if expected_version and data.get("version") != expected_version:
+    raise SystemExit(f"Velocity plugin version mismatch: expected {expected_version}, got {data.get('version')}")
+main_class = expected_main.replace(".", "/") + ".class"
+if main_class not in names:
+    raise SystemExit(f"Velocity plugin main class is missing: {main_class}")
+print(f"Validated Velocity descriptor id={data.get('id')} version={data.get('version')} main={data.get('main')}")
+PY
 }
 
 fetch_geyser() (
@@ -96,6 +131,7 @@ PY
 )"
 
   if [[ -f "$output_file" ]] && [[ "$(hash512_file "$output_file")" == "$GEYSER_EXPECTED_SHA512" ]]; then
+    verify_velocity_descriptor "$output_file" "geyser" "org.geysermc.geyser.platform.velocity.GeyserVelocityPlugin"
     echo "Geyser-Velocity.jar already matches pinned SHA-512."
     exit 0
   fi
@@ -108,6 +144,7 @@ PY
     echo "Geyser SHA-512 mismatch; expected $GEYSER_EXPECTED_SHA512, got $actual_sha512" >&2
     exit 1
   fi
+  verify_velocity_descriptor "$temp_file" "geyser" "org.geysermc.geyser.platform.velocity.GeyserVelocityPlugin"
   mv -f "$temp_file" "$output_file"
   echo "Verified Geyser $GEYSER_VERSION sha512=$GEYSER_EXPECTED_SHA512"
 )
@@ -121,30 +158,49 @@ build_floodgate() (
     cached_sha="$(hash256_file "$output_file")"
     if grep -Fxq "commit=$FLOODGATE_COMMIT" "$provenance_file" \
       && grep -Fxq "build=$FLOODGATE_BUILD" "$provenance_file" \
+      && grep -Fxq "recipe=$FLOODGATE_RECIPE" "$provenance_file" \
       && grep -Fxq "sha256=$cached_sha" "$provenance_file"; then
+      verify_velocity_descriptor "$output_file" "floodgate" "org.geysermc.floodgate.VelocityPlugin" "$FLOODGATE_EXPECTED_DESCRIPTOR_VERSION"
       echo "floodgate-velocity.jar already matches pinned source provenance."
       exit 0
     fi
   fi
 
-  local source_archive source_dir temp_output
-  source_archive="$(mktemp "$OUTPUT_DIR/.floodgate-source.XXXXXX.tar.gz")"
-  source_dir="$(mktemp -d "$OUTPUT_DIR/.floodgate-build.XXXXXX")"
+  local work_root source_dir temp_output
+  work_root="$(mktemp -d "$OUTPUT_DIR/.floodgate-build.XXXXXX")"
+  source_dir="$work_root/Floodgate"
   temp_output="$(mktemp "$OUTPUT_DIR/.floodgate-velocity.jar.XXXXXX")"
-  trap 'rm -rf "$source_archive" "$source_dir" "$temp_output"' EXIT
+  trap 'rm -rf "$work_root" "$temp_output"' EXIT
 
-  echo "Downloading Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD source at $FLOODGATE_COMMIT from GitHub..."
-  curl_retry "$FLOODGATE_SOURCE_URL" -o "$source_archive"
-  tar -xzf "$source_archive" --strip-components=1 -C "$source_dir"
+  echo "Checking out Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD at $FLOODGATE_COMMIT with recursive submodules..."
+  git clone --quiet --filter=blob:none --no-checkout "$FLOODGATE_REPO_URL" "$source_dir"
+  git -C "$source_dir" checkout --quiet --detach "$FLOODGATE_COMMIT"
+  git -C "$source_dir" submodule update --init --recursive --depth 1
 
-  local source_version
+  local checked_commit source_version submodule_status
+  checked_commit="$(git -C "$source_dir" rev-parse HEAD)"
+  if [[ "$checked_commit" != "$FLOODGATE_COMMIT" ]]; then
+    echo "Floodgate checkout mismatch; expected $FLOODGATE_COMMIT, got $checked_commit" >&2
+    exit 1
+  fi
+  if ! git -C "$source_dir" diff --quiet || ! git -C "$source_dir" diff --cached --quiet; then
+    echo "Floodgate checkout is not clean before build" >&2
+    exit 1
+  fi
+  submodule_status="$(git -C "$source_dir" submodule status --recursive)"
+  if grep -Eq '^[+-]' <<<"$submodule_status"; then
+    echo "Floodgate submodule checkout is not pinned cleanly:" >&2
+    echo "$submodule_status" >&2
+    exit 1
+  fi
+
   source_version="$(sed -n 's/^version=//p' "$source_dir/gradle.properties" | head -n 1)"
   if [[ "$source_version" != "$FLOODGATE_SOURCE_VERSION" ]]; then
     echo "Floodgate source version mismatch; expected $FLOODGATE_SOURCE_VERSION, got $source_version" >&2
     exit 1
   fi
 
-  echo "Building official Floodgate commit with BUILD_NUMBER=$FLOODGATE_BUILD..."
+  echo "Reproducing upstream Floodgate build workflow with BUILD_NUMBER=$FLOODGATE_BUILD..."
   docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e BUILD_NUMBER="$FLOODGATE_BUILD" \
@@ -152,7 +208,7 @@ build_floodgate() (
     -v "$source_dir:/workspace" \
     -w /workspace \
     "$FLOODGATE_GRADLE_IMAGE" \
-    gradle :velocity:build --no-daemon
+    ./gradlew build --no-daemon
 
   local built_jar="$source_dir/velocity/build/libs/floodgate-velocity.jar"
   if [[ ! -s "$built_jar" ]]; then
@@ -161,18 +217,24 @@ build_floodgate() (
   fi
 
   cp "$built_jar" "$temp_output"
+  verify_velocity_descriptor "$temp_output" "floodgate" "org.geysermc.floodgate.VelocityPlugin" "$FLOODGATE_EXPECTED_DESCRIPTOR_VERSION"
+
   local built_sha
   built_sha="$(hash256_file "$temp_output")"
   mv -f "$temp_output" "$output_file"
   {
-    echo "source=https://github.com/GeyserMC/Floodgate"
+    echo "source=$FLOODGATE_REPO_URL"
     echo "commit=$FLOODGATE_COMMIT"
     echo "source_version=$FLOODGATE_SOURCE_VERSION"
     echo "runtime_version=$FLOODGATE_VERSION"
     echo "build=$FLOODGATE_BUILD"
+    echo "recipe=$FLOODGATE_RECIPE"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && echo "submodule=$line"
+    done <<<"$submodule_status"
     echo "sha256=$built_sha"
   } > "$provenance_file"
-  echo "Built Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD from commit $FLOODGATE_COMMIT sha256=$built_sha"
+  echo "Built Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD from exact Git checkout sha256=$built_sha"
 )
 
 fetch_geyser
