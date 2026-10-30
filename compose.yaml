@@ -62,8 +62,8 @@ services:
     volumes:
       - velocity-data:/server
       - ./config/velocity:/config:ro
-      - ./build/crossplay-plugins/Geyser-Velocity.jar:/server/plugins/Geyser-Velocity.jar:ro
-      - ./build/crossplay-plugins/floodgate-velocity.jar:/server/plugins/floodgate-velocity.jar:ro
+      - ./build/crossplay-plugins/Geyser-Velocity.jar:/server/plugins/Geyser-Velocity.jar
+      - ./build/crossplay-plugins/floodgate-velocity.jar:/server/plugins/floodgate-velocity.jar
     depends_on:
       paper:
         condition: service_healthy
