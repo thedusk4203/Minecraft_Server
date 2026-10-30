@@ -1,2 +1,3 @@
-# Phase 4A validates data-driven encounter definitions before runtime wiring.
+# Phase 4A/4B data-driven encounter definitions.
 framework_probe.properties
+stone_warden.properties
