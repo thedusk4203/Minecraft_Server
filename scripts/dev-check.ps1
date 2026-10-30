@@ -15,11 +15,14 @@ Write-Host "== Paper core plugin =="
 docker compose exec -T paper rcon-cli "mcserver health"
 
 Write-Host ""
-Write-Host "== Paper land protection =="
+Write-Host "== Paper gameplay dependencies =="
 $plugins = docker compose exec -T paper rcon-cli "plugins"
 $plugins | Write-Host
 if ($plugins -notmatch "GriefPrevention") {
     throw "GriefPrevention is not loaded in Paper."
+}
+if ($plugins -notmatch "AuraSkills") {
+    throw "AuraSkills is not loaded in Paper."
 }
 
 Write-Host ""
