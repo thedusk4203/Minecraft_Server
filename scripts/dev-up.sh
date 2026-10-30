@@ -4,6 +4,20 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+hex_secret() {
+  od -An -N "$1" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+if [[ ! -f .env ]]; then
+  echo "Generating local-only credentials in .env..."
+  {
+    echo "FORWARDING_SECRET=$(hex_secret 32)"
+    echo "POSTGRES_PASSWORD=$(hex_secret 24)"
+    echo "RCON_PASSWORD=$(hex_secret 24)"
+  } > .env
+  chmod 600 .env
+fi
+
 echo "[1/3] Checking Docker..."
 docker info >/dev/null
 
