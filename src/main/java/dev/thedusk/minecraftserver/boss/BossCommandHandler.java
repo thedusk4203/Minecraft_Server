@@ -1,5 +1,6 @@
 package dev.thedusk.minecraftserver.boss;
 
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -12,15 +13,20 @@ import org.bukkit.entity.Player;
 
 public final class BossCommandHandler implements CommandExecutor {
     private final StoneWardenBossManager bossManager;
+    private final StoneWardenItemRewardService itemRewards;
 
-    public BossCommandHandler(StoneWardenBossManager bossManager) {
+    public BossCommandHandler(
+            StoneWardenBossManager bossManager,
+            StoneWardenItemRewardService itemRewards
+    ) {
         this.bossManager = Objects.requireNonNull(bossManager, "bossManager");
+        this.itemRewards = Objects.requireNonNull(itemRewards, "itemRewards");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("Usage: /boss <start [player...]|status>");
+            sendUsage(sender);
             return true;
         }
 
@@ -29,12 +35,22 @@ public final class BossCommandHandler implements CommandExecutor {
                 sender.sendMessage(bossManager.status());
                 yield true;
             }
+            case "recover" -> recover(sender);
             case "start" -> start(sender, args);
             default -> {
-                sender.sendMessage("Usage: /boss <start [player...]|status>");
+                sendUsage(sender);
                 yield true;
             }
         };
+    }
+
+    private boolean recover(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Recovering a boss reward requires an online player.");
+            return true;
+        }
+        itemRewards.recover(player, true);
+        return true;
     }
 
     private boolean start(CommandSender sender, String[] args) {
@@ -59,5 +75,9 @@ public final class BossCommandHandler implements CommandExecutor {
             sender.sendMessage("§c" + exception.getMessage());
         }
         return true;
+    }
+
+    private static void sendUsage(CommandSender sender) {
+        sender.sendMessage("Usage: /boss <start [player...]|status|recover>");
     }
 }
