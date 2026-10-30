@@ -11,6 +11,7 @@ CREATE TABLE market_listing (
     currency_code VARCHAR(32) NOT NULL,
     price_amount BIGINT NOT NULL,
     prepare_correlation_id UUID NOT NULL,
+    return_correlation_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     listed_at TIMESTAMPTZ,
     return_requested_at TIMESTAMPTZ,
@@ -31,9 +32,9 @@ CREATE TABLE market_listing (
     CONSTRAINT market_listing_listed_at_chk
         CHECK (status <> 'LISTED' OR listed_at IS NOT NULL),
     CONSTRAINT market_listing_return_requested_chk
-        CHECK (status <> 'RETURN_PENDING' OR return_requested_at IS NOT NULL),
+        CHECK (status <> 'RETURN_PENDING' OR (return_requested_at IS NOT NULL AND return_correlation_id IS NOT NULL)),
     CONSTRAINT market_listing_cancelled_at_chk
-        CHECK (status <> 'CANCELLED' OR cancelled_at IS NOT NULL)
+        CHECK (status <> 'CANCELLED' OR (cancelled_at IS NOT NULL AND return_correlation_id IS NOT NULL))
 );
 
 CREATE INDEX market_listing_status_number_idx
