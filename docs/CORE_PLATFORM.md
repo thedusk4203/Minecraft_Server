@@ -14,6 +14,12 @@ PostgreSQL is authoritative for durable player and economy state. Schema changes
 
 A migration already applied to a shared environment must never be edited in place. Add a new migration instead.
 
+## Permissions
+
+Core authorization uses named Bukkit permission nodes rather than hard-coded operator checks or direct coupling to one permission plugin. The Phase 2 administrative node is `minecraftserver.admin` and defaults to operators in `plugin.yml`.
+
+Permission providers such as LuckPerms can grant or revoke these nodes through the normal Bukkit permission interface. Core code checks `CommandSender.hasPermission(...)`; it does not mutate external groups or ranks directly. A dedicated provider adapter should only be added when the product needs programmatic group management rather than ordinary authorization checks.
+
 ## Economy
 
 Currency uses integer minor units (`BIGINT`), never floating point.
@@ -35,6 +41,16 @@ Required invariants:
 Consequential mutations emit an `audit_event` with a correlation ID. Correlation IDs connect a user action or automated operation to the records it produced.
 
 Audit payloads are JSONB and must not contain credentials, access tokens, private keys, or raw payment data.
+
+Administrative `mcserver` commands emit `admin.command` audit events. When the sender is a known player, the event stores the internal `player_id`; console/RCON actions remain attributable through the correlation ID and surrounding server logs.
+
+## Admin diagnostics
+
+`/mcserver health` is intentionally a synchronous, non-blocking liveness command so RCON and container smoke tests receive an immediate response. It reads Minecraft process state and Hikari pool state only; it does not open a JDBC connection on the Minecraft main thread. Its audit write is dispatched to the persistence executor.
+
+`/mcserver diagnostics` performs the deeper durable-state query asynchronously. It reports known players, economy accounts, economy transactions, audit-event count and connection-pool activity, and records the diagnostic action in the same database transaction as the snapshot query.
+
+Use `health` for fast liveness and `diagnostics` for a database-backed administrative snapshot. A successful plugin startup already proves initial database connectivity and migration success; ongoing database failures surface through diagnostics and persistence operations.
 
 ## Runtime failure policy
 
