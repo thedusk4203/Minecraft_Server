@@ -52,6 +52,10 @@ function isIronGolem(entity) {
     || displayName.includes('iron golem');
 }
 
+function hasStoneWardenShard(bot) {
+  return bot.inventory.items().some((item) => item.name === 'amethyst_shard');
+}
+
 function horizontalDistance(first, second) {
   const dx = first.x - second.x;
   const dz = first.z - second.z;
@@ -68,11 +72,6 @@ function assertConnected(bot, kicked, context) {
 }
 
 function installClientTickEndCompatibility(bot) {
-  // Minecraft 26.3 rejects a second position-bearing packet unless the client
-  // closes the preceding client tick with client_tick_end. Mineflayer 4.39.0's
-  // published release predates that send path even though the 26.1 protocol
-  // definition already contains tick_end. Keep the compatibility shim isolated
-  // to this CI client until a release containing the upstream fix is pinned.
   const originalWrite = bot._client.write.bind(bot._client);
   const movementPackets = new Set(['position', 'position_look', 'look', 'flying']);
 
@@ -152,8 +151,6 @@ async function main() {
   console.log(`E2E bot spawned as ${bot.username} via ${BOT_VERSION} -> ViaProxy -> Paper 26.3`);
   const initialEntityIds = new Set(Object.keys(bot.entities));
 
-  // These effects keep the verification deterministic without moving the player
-  // server-side. Position is always produced by the real client physics path.
   rcon(`effect give ${BOT_NAME} minecraft:resistance 120 4 true`);
   rcon(`effect give ${BOT_NAME} minecraft:regeneration 120 4 true`);
 
@@ -170,9 +167,6 @@ async function main() {
 
   console.log(`Stone Warden entity observed: id=${boss.id}`);
 
-  // The normal first slam telegraph begins around tick 180 (~9 s) and the first
-  // charge around tick 240 (~12 s). Observe long enough for both telegraphs and
-  // their executions while keeping any recovery movement client-authored.
   const mechanicDeadline = Date.now() + 16_000;
   while (Date.now() < mechanicDeadline) {
     assertConnected(bot, kicked, 'during mechanic verification');
@@ -189,8 +183,6 @@ async function main() {
     throw new Error(`Boss did not remain active through mechanic window: ${activeBeforeKill}`);
   }
 
-  // Accelerate only the kill portion. Damage still originates from the real client,
-  // so participant binding, arena authorization and normal melee reach are exercised.
   rcon(`effect give ${BOT_NAME} minecraft:strength 60 20 true`);
 
   const killDeadline = Date.now() + 35_000;
@@ -199,7 +191,14 @@ async function main() {
     const status = rcon('boss status');
     if (status.includes('No active Stone Warden encounter.')) {
       console.log('Stone Warden runtime reports no active encounter after client attacks.');
-      await sleep(1_000);
+      await waitFor(
+        'Stone Warden Shard in the real client inventory',
+        () => hasStoneWardenShard(bot),
+        15_000,
+        250
+      );
+      console.log('Stone Warden Shard observed in real client inventory.');
+      await sleep(500);
       bot.quit('E2E complete');
       return;
     }
