@@ -255,6 +255,42 @@ class EconomyTransferIntegrationTest {
     }
 
     @Test
+    void oppositeDirectionAccountCreationUsesStableLockOrder() throws Exception {
+        PlayerIdentity alpha = identities.recordSeen(UUID.randomUUID(), "CreateAlpha");
+        PlayerIdentity beta = identities.recordSeen(UUID.randomUUID(), "CreateBeta");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<EconomyException> alphaToBeta = executor.submit(() -> failedTransferAfterStart(
+                    ready,
+                    start,
+                    new EconomyTransfer(
+                            alpha.playerId(), beta.playerId(), "COINS", 1L,
+                            "market.trade", "trade-create-alpha-beta", UUID.randomUUID(), "{}"
+                    )
+            ));
+            Future<EconomyException> betaToAlpha = executor.submit(() -> failedTransferAfterStart(
+                    ready,
+                    start,
+                    new EconomyTransfer(
+                            beta.playerId(), alpha.playerId(), "COINS", 1L,
+                            "market.trade", "trade-create-beta-alpha", UUID.randomUUID(), "{}"
+                    )
+            ));
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            assertEquals(EconomyException.Code.INSUFFICIENT_FUNDS, alphaToBeta.get(10, TimeUnit.SECONDS).code());
+            assertEquals(EconomyException.Code.INSUFFICIENT_FUNDS, betaToAlpha.get(10, TimeUnit.SECONDS).code());
+        }
+
+        assertEquals(0L, countRows("economy_account"));
+        assertEquals(0L, countRows("economy_transaction"));
+        assertEquals(0L, countRows("audit_event"));
+    }
+
+    @Test
     void composedTransferRequiresCallerOwnedTransaction() throws Exception {
         PlayerIdentity from = identities.recordSeen(UUID.randomUUID(), "AutoFrom");
         PlayerIdentity to = identities.recordSeen(UUID.randomUUID(), "AutoTo");
@@ -276,6 +312,21 @@ class EconomyTransferIntegrationTest {
         }
         assertEquals(0L, countRows("economy_transaction"));
         assertEquals(0L, countRows("audit_event"));
+    }
+
+    private static EconomyException failedTransferAfterStart(
+            CountDownLatch ready,
+            CountDownLatch start,
+            EconomyTransfer transfer
+    ) throws Exception {
+        ready.countDown();
+        assertTrue(start.await(5, TimeUnit.SECONDS));
+        try {
+            economy.transfer(transfer);
+            throw new AssertionError("Expected transfer to fail for zero-balance payer");
+        } catch (EconomyException exception) {
+            return exception;
+        }
     }
 
     private static void seed(PlayerIdentity player, long amount, String key) {
