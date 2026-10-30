@@ -33,7 +33,9 @@ services:
       DATABASE_USER: "minecraft"
       DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Run the dev-up script to generate .env first}"
       DATABASE_POOL_SIZE: "10"
-      MODRINTH_PROJECTS: "griefprevention:16.18.7"
+      MODRINTH_PROJECTS: |
+        griefprevention:16.18.7
+        auraskills:2.4.0
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
     expose:
       - "25565"
