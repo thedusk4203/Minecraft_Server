@@ -133,7 +133,7 @@ class StoneWardenItemRewardRepositoryIntegrationTest {
 
     @Test
     void itemIntentAuditConflictRollsBackIntentInsert() throws Exception {
-        Scenario scenario = completedGrantedReward("ItemIntentRollback");
+        Scenario scenario = completedGrantedReward("IntentRollback");
         reserveAuditKey("encounter:reward:" + scenario.rewardId() + ":item-prepared");
 
         EncounterRewardException exception = assertThrows(
@@ -147,7 +147,7 @@ class StoneWardenItemRewardRepositoryIntegrationTest {
 
     @Test
     void snapshotAuditConflictRollsBackSnapshotTransition() throws Exception {
-        Scenario scenario = completedGrantedReward("ItemSnapshotRollback");
+        Scenario scenario = completedGrantedReward("SnapRollback");
         itemRewards.prepareEligibleIntents(UUID.randomUUID());
         byte[] payload = new byte[]{1, 2, 3, 4};
         reserveAuditKey("encounter:reward:" + scenario.rewardId() + ":item-snapshot");
@@ -171,7 +171,7 @@ class StoneWardenItemRewardRepositoryIntegrationTest {
 
     @Test
     void deliveryAuditConflictRollsBackTerminalAcknowledgement() throws Exception {
-        Scenario scenario = completedGrantedReward("ItemDeliveryRollback");
+        Scenario scenario = completedGrantedReward("DeliverRollback");
         itemRewards.prepareEligibleIntents(UUID.randomUUID());
         byte[] payload = new byte[]{9, 8, 7, 6};
         itemRewards.prepareSnapshot(
@@ -216,7 +216,7 @@ class StoneWardenItemRewardRepositoryIntegrationTest {
 
     @Test
     void persistedSemanticDriftFailsClosed() throws Exception {
-        Scenario scenario = completedGrantedReward("ItemSemanticDrift");
+        Scenario scenario = completedGrantedReward("SemanticDrift");
         itemRewards.prepareEligibleIntents(UUID.randomUUID());
         try (var connection = database.connection();
              var statement = connection.prepareStatement(
