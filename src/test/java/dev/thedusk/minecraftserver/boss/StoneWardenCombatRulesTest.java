@@ -19,9 +19,13 @@ class StoneWardenCombatRulesTest {
     }
 
     @Test
-    void checksArenaRadiusInTwoDimensions() {
+    void checksArenaRadiusAndVerticalTolerance() {
         assertTrue(StoneWardenCombatRules.insideRadius2d(0, 0, 3, 4, 5));
         assertFalse(StoneWardenCombatRules.insideRadius2d(0, 0, 5.01, 0, 5));
+
+        assertTrue(StoneWardenCombatRules.insideArena(0, 64, 0, 3, 72, 4, 5, 8));
+        assertFalse(StoneWardenCombatRules.insideArena(0, 64, 0, 3, 72.01, 4, 5, 8));
+        assertFalse(StoneWardenCombatRules.insideArena(0, 64, 0, 6, 64, 0, 5, 8));
     }
 
     @Test
