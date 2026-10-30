@@ -45,8 +45,8 @@ public final class AdminDiagnosticsService {
             connection.setAutoCommit(false);
             try {
                 UUID actorPlayerId = findActorPlayerId(connection, actorMinecraftUuid);
-                counts = readCounts(connection);
                 appendAdminAudit(connection, actorPlayerId, "diagnostics", correlationId);
+                counts = readCounts(connection);
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 rollback(connection, exception);
