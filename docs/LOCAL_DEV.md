@@ -10,7 +10,7 @@ Only Docker Desktop (or Docker Engine + Compose) is required for the normal loca
 .\scripts\dev-up.ps1
 ```
 
-The script builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
+On first run, the script creates a git-ignored `.env` containing random local-only PostgreSQL, RCON and Velocity-forwarding credentials. It then builds `MinecraftServerCore` with Gradle 9.8.2 / JDK 25 and starts:
 
 - PostgreSQL
 - Paper 26.3 backend
@@ -43,9 +43,13 @@ The check validates PostgreSQL readiness, invokes `/mcserver health` through Pap
 bash scripts/dev-up.sh
 ```
 
+The Unix startup script follows the same model and creates `.env` with mode `600` when it does not already exist.
+
 ## Security boundary
 
-The credentials and forwarding secret in `compose.yaml` are development-only placeholders. They must never be reused for staging or production. Production will use generated secrets and host/network firewall rules, with backend Paper ports inaccessible from the public internet.
+No reusable runtime credential is committed to the repository. `compose.yaml` requires three environment values (`FORWARDING_SECRET`, `POSTGRES_PASSWORD`, and `RCON_PASSWORD`); the local startup scripts generate them into the git-ignored `.env`. CI supplies disposable values only for its isolated smoke-test runner.
+
+Staging and production must use independently generated secrets from the deployment environment/secret store. The backend Paper port must remain inaccessible from the public internet; only Velocity is an ingress point.
 
 ## Why the backend is offline-mode
 
