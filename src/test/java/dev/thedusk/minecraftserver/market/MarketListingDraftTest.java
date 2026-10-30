@@ -29,14 +29,18 @@ class MarketListingDraftTest {
     }
 
     @Test
-    void rejectsInvalidHashAndPrice() {
+    void rejectsInvalidHashMaterialAndPrice() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> draft("not-a-hash", 10L)
+                () -> draft("not-a-hash", "minecraft:stone", 10L)
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> draft("a".repeat(64), 0L)
+                () -> draft("a".repeat(64), "not a material", 10L)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> draft("a".repeat(64), "minecraft:stone", 0L)
         );
     }
 
@@ -58,13 +62,13 @@ class MarketListingDraftTest {
         );
     }
 
-    private static MarketListingDraft draft(String hash, long price) {
+    private static MarketListingDraft draft(String hash, String material, long price) {
         return new MarketListingDraft(
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 new byte[]{1},
                 hash,
-                "minecraft:stone",
+                material,
                 1,
                 "COINS",
                 price,
