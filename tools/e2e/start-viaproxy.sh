@@ -9,8 +9,17 @@ WORK_DIR="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
 JAR_PATH="${WORK_DIR}/${JAR_NAME}"
 LOG_PATH="${WORK_DIR}/viaproxy.log"
 PID_PATH="${WORK_DIR}/viaproxy.pid"
+JAVA_BIN="${JAVA_HOME:+${JAVA_HOME}/bin/java}"
+JAVA_BIN="${JAVA_BIN:-java}"
 
 mkdir -p "${WORK_DIR}"
+
+if [[ ! -x "${JAVA_BIN}" ]]; then
+  echo "Java executable is not available: ${JAVA_BIN}" >&2
+  exit 1
+fi
+
+"${JAVA_BIN}" -version
 
 if [[ ! -f "${JAR_PATH}" ]]; then
   curl --fail --location --silent --show-error "${DOWNLOAD_URL}" --output "${JAR_PATH}"
@@ -18,7 +27,7 @@ fi
 
 echo "${EXPECTED_SHA256}  ${JAR_PATH}" | sha256sum --check --strict
 
-java -jar "${JAR_PATH}" cli \
+"${JAVA_BIN}" -jar "${JAR_PATH}" cli \
   --target-address 127.0.0.1:25567 \
   --target-version 26.3 \
   >"${LOG_PATH}" 2>&1 &
