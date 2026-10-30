@@ -45,9 +45,15 @@ public final class LandClaimOnboardingListener implements Listener {
 
         executor.submit(() -> {
                     var identity = identities.recordSeen(minecraftUuid, playerName);
-                    return onboarding.markLandClaimed(identity.playerId());
+                    boolean firstClaim = onboarding.markLandClaimed(identity.playerId());
+                    var progress = onboarding.find(identity.playerId()).orElseThrow(
+                            () -> new IllegalStateException(
+                                    "Onboarding row missing after land claim for " + identity.playerId()
+                            )
+                    );
+                    return new ClaimResult(firstClaim, progress.firstCurrencyEarned());
                 })
-                .whenComplete((firstClaim, failure) -> {
+                .whenComplete((result, failure) -> {
                     if (failure != null) {
                         logger.log(
                                 Level.SEVERE,
@@ -56,13 +62,13 @@ public final class LandClaimOnboardingListener implements Listener {
                         );
                         return;
                     }
-                    if (Boolean.TRUE.equals(firstClaim)) {
-                        showNextObjective(minecraftUuid);
+                    if (result.firstClaim()) {
+                        showNextObjective(minecraftUuid, result.currencyAlreadyEarned());
                     }
                 });
     }
 
-    private void showNextObjective(UUID minecraftUuid) {
+    private void showNextObjective(UUID minecraftUuid, boolean currencyAlreadyEarned) {
         if (!plugin.isEnabled()) {
             return;
         }
@@ -71,7 +77,17 @@ public final class LandClaimOnboardingListener implements Listener {
             if (player == null || !player.isOnline()) {
                 return;
             }
-            player.sendMessage("§aĐã bảo vệ đất thành công. §fBước tiếp theo: kiếm đồng coin đầu tiên.");
+
+            player.sendMessage("§aĐã bảo vệ đất thành công.");
+            if (currencyAlreadyEarned) {
+                player.sendMessage("§7Bạn cũng đã có coin onboarding. Tiếp tục tích lũy tài nguyên cho bước giao dịch tiếp theo.");
+            } else {
+                player.sendMessage("§fBước tiếp theo: tăng cấp một kỹ năng AuraSkills để nhận coin đầu tiên.");
+                player.sendMessage("§7Dùng §f/skills §7để xem các kỹ năng và nguồn XP.");
+            }
         });
+    }
+
+    private record ClaimResult(boolean firstClaim, boolean currencyAlreadyEarned) {
     }
 }

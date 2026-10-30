@@ -59,21 +59,53 @@ Exit gate:
 - New player can join, understand the objective, claim land, earn currency and complete an initial progression loop without staff intervention.
 
 ### Phase 3A — Onboarding + first land claim
-Status: in progress
+Status: complete
 
 Scope:
 - durable onboarding progress tied to internal `player_id`
 - first-join objective guidance
-- GriefPrevention integration pinned to a production-compatible release
+- GriefPrevention 16.18.7 land protection
 - first successful claim recorded as a durable milestone
 - onboarding state survives restart/reconnect
-- CI proves the land-protection plugin loads with the core stack
 
 Exit gate:
 - A new player receives the first objective without staff intervention.
 - Creating the first non-cancelled GriefPrevention claim records `land_claimed_at` exactly once.
 - Repeated joins/claims are idempotent.
 - Restart preserves the onboarding milestone.
+
+### Phase 3B — First skill level + starter currency
+Status: in progress
+
+Scope:
+- AuraSkills 2.4.0 pinned for Paper/Minecraft 26.3
+- first skill ID/level/timestamp persisted durably
+- one-time 100 COINS teaching grant
+- onboarding skill/currency milestone and economy ledger mutation committed atomically
+- deterministic per-player idempotency key
+- reconnect guidance derived from durable onboarding state
+
+Exit gate:
+- First AuraSkills level-up records the first skill exactly once.
+- Starter currency is paid exactly once through the core economy ledger.
+- Concurrent/replayed level-up handling cannot double-pay or replace first-skill telemetry.
+- A forced ledger conflict rolls back both skill and currency milestones.
+- Restart preserves land, skill, currency and balance state.
+- Full stack loads both GriefPrevention and AuraSkills while existing crossplay/core smoke tests remain green.
+
+### Phase 3C — First trade / market checkpoint
+Status: planned
+
+Scope direction:
+- server-owned async listing/escrow workflow unless an external dependency proves compatible with the PostgreSQL/idempotency/threading contract
+- first successful buy/sell/trade records `market_used_at`
+- trade settlement uses compensating/auditable ledger operations rather than direct balance edits
+- starter objective advances without staff intervention
+
+Exit gate:
+- A player with onboarding currency can complete one market/trade action.
+- Settlement is duplication-safe and survives retry/restart.
+- Onboarding records `market_used_at` exactly once.
 
 ## Phase 4 — PvE content
 Deliverables:
@@ -151,12 +183,14 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Finish Phase 3A: onboarding and first land-claim milestone.
+Finish Phase 3B: first skill level and starter currency.
 
 Acceptance checklist:
-- `V2__onboarding_progress.sql` migrates on PostgreSQL 18.
-- Join bootstrap persists identity + onboarding without blocking the Minecraft main thread.
-- GriefPrevention 16.18.7 is pinned and loads in the Paper stack.
-- First claim milestone is durable and idempotent.
-- Integration tests cover start, claim replay and restart persistence.
+- `V3__first_skill_progress.sql` migrates on PostgreSQL 18.
+- AuraSkills 2.4.0 API compiles and the plugin loads in the Paper stack.
+- `SkillLevelUpEvent` persistence runs outside the Minecraft main thread.
+- First skill ID/level is immutable through replay.
+- The 100 COINS onboarding grant is globally idempotent per player.
+- Ledger + first-currency milestone are one database transaction.
+- Conflict rollback and restart persistence are covered by integration tests.
 - Full-stack CI remains green.

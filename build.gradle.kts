@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "dev.thedusk.minecraft"
-version = "0.3.0-SNAPSHOT"
+version = "0.3.1-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -21,6 +21,7 @@ dependencies {
     compileOnly("com.github.GriefPrevention:GriefPrevention:16.18.7") {
         isTransitive = false
     }
+    compileOnly("dev.aurelium:auraskills-api-bukkit:2.4.0")
 
     implementation("com.zaxxer:HikariCP:7.1.0")
     implementation("org.postgresql:postgresql:42.7.14")

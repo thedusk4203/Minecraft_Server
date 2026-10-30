@@ -5,6 +5,8 @@ import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
+import dev.thedusk.minecraftserver.onboarding.AuraSkillsOnboardingListener;
+import dev.thedusk.minecraftserver.onboarding.FirstSkillCurrencyService;
 import dev.thedusk.minecraftserver.onboarding.LandClaimOnboardingListener;
 import dev.thedusk.minecraftserver.onboarding.OnboardingProgressRepository;
 import dev.thedusk.minecraftserver.onboarding.PlayerBootstrapListener;
@@ -33,6 +35,11 @@ public final class MinecraftServerCore extends JavaPlugin {
 
             AuditLog auditLog = new AuditLog();
             economy = new EconomyLedger(database, auditLog);
+            FirstSkillCurrencyService firstSkillCurrency = new FirstSkillCurrencyService(
+                    database,
+                    onboarding,
+                    economy
+            );
             AdminDiagnosticsService diagnostics = new AdminDiagnosticsService(database, auditLog);
 
             getServer().getPluginManager().registerEvents(
@@ -55,12 +62,22 @@ public final class MinecraftServerCore extends JavaPlugin {
                     ),
                     this
             );
+            getServer().getPluginManager().registerEvents(
+                    new AuraSkillsOnboardingListener(
+                            this,
+                            identities,
+                            firstSkillCurrency,
+                            persistenceExecutor,
+                            getLogger()
+                    ),
+                    this
+            );
             configureAdminCommand(diagnostics);
 
             getLogger().info(
                     "MinecraftServerCore enabled on Minecraft "
                             + getServer().getMinecraftVersion()
-                            + " with PostgreSQL persistence and onboarding"
+                            + " with PostgreSQL persistence, onboarding, land protection and AuraSkills progression"
             );
         } catch (RuntimeException exception) {
             closeResources();

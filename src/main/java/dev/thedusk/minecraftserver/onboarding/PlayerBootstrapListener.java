@@ -46,7 +46,7 @@ public final class PlayerBootstrapListener implements Listener {
                                     "Onboarding row missing after ensureStarted for " + identity.playerId()
                             )
                     );
-                    return new BootstrapResult(newlyStarted, !progress.landClaimed());
+                    return new BootstrapResult(newlyStarted, progress);
                 })
                 .whenComplete((result, failure) -> {
                     if (failure != null) {
@@ -57,13 +57,11 @@ public final class PlayerBootstrapListener implements Listener {
                         );
                         return;
                     }
-                    if (result.needsLandClaim()) {
-                        showFirstObjective(minecraftUuid, result.newlyStarted());
-                    }
+                    showCurrentObjective(minecraftUuid, result);
                 });
     }
 
-    private void showFirstObjective(UUID minecraftUuid, boolean newlyStarted) {
+    private void showCurrentObjective(UUID minecraftUuid, BootstrapResult result) {
         if (!plugin.isEnabled()) {
             return;
         }
@@ -72,15 +70,28 @@ public final class PlayerBootstrapListener implements Listener {
             if (player == null || !player.isOnline()) {
                 return;
             }
-            if (newlyStarted) {
-                player.sendMessage("§6Chào mừng! §fMục tiêu đầu tiên: bảo vệ mảnh đất của bạn.");
-            } else {
-                player.sendMessage("§6Mục tiêu hiện tại: §fbảo vệ mảnh đất của bạn.");
+
+            OnboardingProgress progress = result.progress();
+            if (result.newlyStarted()) {
+                player.sendMessage("§6Chào mừng! §fServer sẽ hướng dẫn từng bước ngắn thay vì một bức tường chữ.");
             }
-            player.sendMessage("§7Dùng xẻng vàng của GriefPrevention để tạo claim; tiến trình sẽ tự cập nhật khi claim thành công.");
+
+            if (!progress.landClaimed()) {
+                player.sendMessage("§6Mục tiêu hiện tại: §fbảo vệ mảnh đất của bạn.");
+                player.sendMessage("§7Dùng xẻng vàng của GriefPrevention để tạo claim; tiến trình sẽ tự cập nhật khi claim thành công.");
+                return;
+            }
+
+            if (!progress.firstCurrencyEarned()) {
+                player.sendMessage("§6Mục tiêu hiện tại: §ftăng cấp một kỹ năng AuraSkills để nhận coin đầu tiên.");
+                player.sendMessage("§7Dùng §f/skills §7để xem kỹ năng; hãy tiếp tục các hoạt động sinh tồn như đào, farm hoặc chiến đấu.");
+                return;
+            }
+
+            player.sendMessage("§aBạn đã hoàn tất các bước onboarding hiện có. §7Tiếp tục sinh tồn và tích lũy tài nguyên cho bước giao dịch tiếp theo.");
         });
     }
 
-    private record BootstrapResult(boolean newlyStarted, boolean needsLandClaim) {
+    private record BootstrapResult(boolean newlyStarted, OnboardingProgress progress) {
     }
 }

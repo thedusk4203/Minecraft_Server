@@ -15,6 +15,7 @@ On first run, the script creates a git-ignored `.env` containing random local-on
 - PostgreSQL
 - Paper 26.3 backend
 - GriefPrevention 16.18.7 on Paper
+- AuraSkills 2.4.0 on Paper
 - Velocity 4.3.1 proxy
 - Geyser-Velocity
 - Floodgate-Velocity
@@ -30,7 +31,7 @@ Endpoints:
 .\scripts\dev-check.ps1
 ```
 
-The check validates PostgreSQL readiness, invokes `/mcserver health` through Paper RCON, confirms GriefPrevention is loaded, and prints recent Velocity/Geyser/Floodgate logs.
+The check validates PostgreSQL readiness, invokes `/mcserver health` through Paper RCON, confirms GriefPrevention and AuraSkills are loaded, and prints recent Velocity/Geyser/Floodgate logs.
 
 Administrative commands require `minecraftserver.admin` (operator by default):
 
@@ -39,11 +40,29 @@ Administrative commands require `minecraftserver.admin` (operator by default):
 
 Both command paths carry correlation IDs and are written to the audit log. `health` is the RCON/container smoke-test command; use `diagnostics` when investigating durable state.
 
-## Phase 3A onboarding check
+## Phase 3 onboarding check
 
-A player who has not yet created a protected claim receives the current onboarding objective on join. Use GriefPrevention's normal golden-shovel claim flow; a successful non-cancelled claim records the durable `land_claimed_at` milestone and advances the guidance toward earning the first coin.
+### Land claim
 
-Reconnect before completing the claim objective intentionally repeats the reminder. Once the milestone is stored, that land-claim reminder stops. PostgreSQL remains authoritative for onboarding progress; GriefPrevention remains authoritative for claim geometry and ownership.
+A player who has not yet created a protected claim receives the current onboarding objective on join. Use GriefPrevention's normal golden-shovel claim flow; a successful non-cancelled claim records the durable `land_claimed_at` milestone.
+
+Reconnect before completing the claim objective intentionally repeats the reminder. PostgreSQL remains authoritative for onboarding progress; GriefPrevention remains authoritative for claim geometry and ownership.
+
+### First skill and currency
+
+After land is protected, the current guidance asks the player to gain an AuraSkills level. Use `/skills` to view available skills and perform ordinary survival activities such as mining, farming, foraging or combat.
+
+The first observed AuraSkills level-up records:
+
+- first skill timestamp;
+- first skill ID;
+- level reached;
+- first-currency timestamp;
+- one immutable economy-ledger credit of `100 COINS`.
+
+The money is granted by `MinecraftServerCore`, not AuraSkills/Vault. The deterministic ledger idempotency key prevents repeated or concurrent level-up events from paying the onboarding grant twice.
+
+If the player levels a skill before claiming land, that progress is still recorded safely; join guidance continues to prioritize the missing land claim. Once land + first skill/currency are both complete, the current implementation reports that the available onboarding steps are complete while the trading slice is still pending.
 
 ## Stop
 
@@ -73,4 +92,4 @@ Velocity performs Mojang authentication. The Paper backend therefore has `online
 
 Geyser and Floodgate are installed on Velocity from their official download API on container startup. Geyser runs at the proxy layer; it is intentionally not installed on the Paper backend.
 
-Land protection is server-side through GriefPrevention, so Java and Bedrock clients share the same authoritative protection rules even though their client input methods differ.
+Land protection and skill progression are server-side through GriefPrevention and AuraSkills, so Java and Bedrock clients share the same authoritative gameplay rules even though their client input methods differ.
