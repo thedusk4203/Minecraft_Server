@@ -51,6 +51,10 @@ public final class DatabaseManager implements AutoCloseable {
         return dataSource.getConnection();
     }
 
+    public boolean isOpen() {
+        return !dataSource.isClosed();
+    }
+
     public boolean isHealthy() {
         try (Connection connection = dataSource.getConnection()) {
             return connection.isValid((int) VALIDATION_TIMEOUT.toSeconds());
