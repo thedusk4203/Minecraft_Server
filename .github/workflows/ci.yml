@@ -155,14 +155,38 @@ jobs:
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=charge_telegraph'
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
 
+      - name: Run Stone Warden two-client party E2E
+        run: node tools/e2e/stone-warden-party.cjs
+
+      - name: Verify Stone Warden party binding and completion
+        run: |
+          status=""
+          for _ in $(seq 1 40); do
+            status="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT status FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1")"
+            if [[ "$status" == "COMPLETED" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable party Stone Warden status: $status"
+          test "$status" = "COMPLETED"
+
+          participants="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_participant WHERE run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1)")"
+          echo "durable party participant count: $participants"
+          test "$participants" = "2"
+
+          logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=started .* participants=2'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
+
       - name: Show E2E logs on failure
         if: failure()
         run: |
-          docker compose -f compose.e2e.yaml logs --tail=400 || true
+          docker compose -f compose.e2e.yaml logs --tail=500 || true
           work_dir="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
           if [[ -f "$work_dir/viaproxy.log" ]]; then
             echo '--- ViaProxy log ---'
-            tail -300 "$work_dir/viaproxy.log"
+            tail -400 "$work_dir/viaproxy.log"
           fi
 
       - name: Stop E2E stack and ViaProxy
