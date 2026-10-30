@@ -166,10 +166,12 @@ build_floodgate() (
     fi
   fi
 
-  local work_root source_dir temp_output
+  local work_root source_dir temp_output host_uid host_gid
   work_root="$(mktemp -d "$OUTPUT_DIR/.floodgate-build.XXXXXX")"
   source_dir="$work_root/Floodgate"
   temp_output="$(mktemp "$OUTPUT_DIR/.floodgate-velocity.jar.XXXXXX")"
+  host_uid="$(id -u)"
+  host_gid="$(id -g)"
   trap 'rm -rf "$work_root" "$temp_output"' EXIT
 
   echo "Checking out Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD at $FLOODGATE_COMMIT with recursive submodules..."
@@ -201,14 +203,19 @@ build_floodgate() (
   fi
 
   echo "Reproducing upstream Floodgate build workflow with BUILD_NUMBER=$FLOODGATE_BUILD..."
+  # Run as root so Gradle can provision its Java 8/11/17 toolchains under the
+  # ephemeral GRADLE_USER_HOME. Always restore bind-mount ownership afterwards
+  # so the host runner can inspect and clean the exact-source checkout.
   docker run --rm \
-    --user "$(id -u):$(id -g)" \
+    --user 0:0 \
     -e BUILD_NUMBER="$FLOODGATE_BUILD" \
     -e GRADLE_USER_HOME=/tmp/gradle-home \
+    -e HOST_UID="$host_uid" \
+    -e HOST_GID="$host_gid" \
     -v "$source_dir:/workspace" \
     -w /workspace \
     "$FLOODGATE_GRADLE_IMAGE" \
-    ./gradlew build --no-daemon
+    sh -c './gradlew build --no-daemon; rc=$?; chown -R "$HOST_UID:$HOST_GID" /workspace; exit $rc'
 
   local built_jar="$source_dir/velocity/build/libs/floodgate-velocity.jar"
   if [[ ! -s "$built_jar" ]]; then
