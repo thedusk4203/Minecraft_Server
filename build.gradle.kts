@@ -21,7 +21,10 @@ dependencies {
     implementation("org.flywaydb:flyway-core:13.11.1")
     implementation("org.flywaydb:flyway-database-postgresql:13.11.1")
 
-    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.testcontainers:testcontainers")
     testImplementation("org.testcontainers:testcontainers-postgresql")
@@ -49,7 +52,7 @@ tasks.test {
     }
 }
 
-val integrationTest by tasks.registering(Test::class) {
+val integrationTest = tasks.register<Test>("integrationTest") {
     description = "Runs PostgreSQL-backed integration tests."
     group = "verification"
     testClassesDirs = sourceSets.test.get().output.classesDirs
@@ -67,6 +70,7 @@ tasks.jar {
 tasks.shadowJar {
     archiveBaseName.set("minecraft-server-core")
     archiveClassifier.set("")
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
     mergeServiceFiles()
     exclude("org/slf4j/**")
 }
