@@ -31,6 +31,13 @@ Endpoints:
 
 The check validates PostgreSQL readiness, invokes `/mcserver health` through Paper RCON, and prints recent Velocity/Geyser/Floodgate logs.
 
+Administrative commands require `minecraftserver.admin` (operator by default):
+
+- `/mcserver health` returns immediate process/pool liveness without JDBC work on the Minecraft main thread.
+- `/mcserver diagnostics` runs a PostgreSQL-backed durable-state snapshot asynchronously and reports player/economy/audit counts.
+
+Both command paths carry correlation IDs and are written to the audit log. `health` is the RCON/container smoke-test command; use `diagnostics` when investigating durable state.
+
 ## Stop
 
 ```powershell
