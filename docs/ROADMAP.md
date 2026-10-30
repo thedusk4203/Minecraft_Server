@@ -221,7 +221,7 @@ Scope:
 - death, disconnect, timeout, wipe/failure and spawn-failure behavior
 - clean reset/despawn behavior
 - telemetry for attempt start, mechanics and terminal outcome
-- repeatable real-network-client E2E verification
+- repeatable solo and two-client real-network-client E2E verification
 
 Exit gate met:
 - a real client can join the isolated Paper 26.3 verification stack through pinned ViaProxy translation;
@@ -231,7 +231,9 @@ Exit gate met:
 - Seismic Slam and Stone Charge telemetry are observed;
 - only bound, arena-valid participant damage is accepted;
 - client-originated melee damage completes the boss encounter;
-- latest durable run reaches `COMPLETED` exactly through the encounter lifecycle;
+- a two-client party can join, converge through normal client movement and start one Stone Warden run;
+- both clients remain bound through mechanics and exactly two durable `encounter_participant` rows are persisted;
+- latest durable solo and party runs reach `COMPLETED` through the same encounter lifecycle;
 - restart, cleanup and terminalization continue to rely on the frozen Phase 4A durable authority;
 - no reward/item/economy mutation exists in Phase 4B;
 - existing Phase 1–4A integration/full-stack/market/crossplay regression gates remain green.
@@ -239,9 +241,12 @@ Exit gate met:
 Receipts:
 - PR #13 implementation merged at `014bf43779e12456c8f211d760d696411f097397`.
 - Implementation final-head CI `41025886647` succeeded.
-- PR #14 real-client verification merged at `781a7252c57829d5e2da7daeee8bf0ea6cef7f4e`.
-- Verification exact head `adcc25866bd498506b7bf6afbf77111454fad5fc`.
-- Verification CI `41028891703` succeeded.
+- PR #14 solo real-client verification merged at `781a7252c57829d5e2da7daeee8bf0ea6cef7f4e`.
+- Solo verification exact head `adcc25866bd498506b7bf6afbf77111454fad5fc`.
+- Solo verification CI `41028891703` succeeded.
+- PR #15 two-client party verification merged at `9bd8eb5c0d345388ca0f12c4408ab544fe10ec58`.
+- Party verification exact head `c4cc1ee718f9b14e08c1c8ce551af14b21bd1186`.
+- Party verification CI `41031029381` succeeded.
 - Freeze receipt: `docs/PHASE4B_FREEZE.md`.
 
 ### Phase 4C — Boss Reward Delivery
