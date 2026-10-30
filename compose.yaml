@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: minecraft
       POSTGRES_USER: minecraft
-      POSTGRES_PASSWORD: minecraft-dev-only
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Run the dev-up script to generate .env first}"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U minecraft -d minecraft"]
       interval: 5s
@@ -25,8 +25,8 @@ services:
       MEMORY: "3G"
       MOTD: "Minecraft Server Dev Backend"
       ENABLE_RCON: "TRUE"
-      RCON_PASSWORD: "minecraft-dev-only"
-      PAPER_VELOCITY_SECRET: "minecraft-dev-forwarding-secret-change-me"
+      RCON_PASSWORD: "${RCON_PASSWORD:?Run the dev-up script to generate .env first}"
+      PAPER_VELOCITY_SECRET: "${FORWARDING_SECRET:?Run the dev-up script to generate .env first}"
       PLUGINS: "/plugins"
     expose:
       - "25565"
@@ -45,7 +45,7 @@ services:
       VELOCITY_VERSION: "4.3.1"
       MINECRAFT_VERSION: "26.3"
       MEMORY: "512m"
-      VELOCITY_FORWARDING_SECRET: "minecraft-dev-forwarding-secret-change-me"
+      VELOCITY_FORWARDING_SECRET: "${FORWARDING_SECRET:?Run the dev-up script to generate .env first}"
       PLUGINS: |
         https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
         https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
