@@ -260,6 +260,69 @@ jobs:
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=started .* participants=2'
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
 
+      - name: Run Stone Vault two-client real-client E2E
+        run: node tools/e2e/stone-vault-party.cjs
+
+      - name: Verify Stone Vault same-run progression and frozen rewards
+        run: |
+          run_id=""
+          status=""
+          for _ in $(seq 1 50); do
+            row="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -AtF '|' -c "SELECT e.run_id, e.status FROM encounter_run e JOIN structured_activity_run a ON a.run_id = e.run_id WHERE a.activity_id = 'stone_vault' ORDER BY e.started_at DESC LIMIT 1")"
+            run_id="${row%%|*}"
+            status="${row#*|}"
+            if [[ -n "$run_id" && "$status" == "COMPLETED" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "Stone Vault run: $run_id status=$status"
+          test -n "$run_id"
+          test "$status" = "COMPLETED"
+
+          activity_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM structured_activity_run WHERE run_id = '$run_id'::uuid AND activity_id = 'stone_vault' AND activity_version = 1 AND current_beat = 3")"
+          echo "Stone Vault activity rows at boss beat: $activity_count"
+          test "$activity_count" = "1"
+
+          participants="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_participant WHERE run_id = '$run_id'::uuid")"
+          echo "Stone Vault canonical participant count: $participants"
+          test "$participants" = "2"
+
+          reward_count="0"
+          for _ in $(seq 1 50); do
+            reward_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward r JOIN economy_transaction t ON t.transaction_id = r.currency_transaction_id JOIN economy_account a ON a.account_id = t.account_id WHERE r.run_id = '$run_id'::uuid AND r.status = 'CURRENCY_GRANTED' AND r.reward_key = 'stone_warden_completion' AND r.reward_version = 1 AND r.currency_code = 'COINS' AND r.currency_amount = 250 AND t.delta = 250 AND t.reason = 'STONE_WARDEN_REWARD' AND a.player_id = r.player_id")"
+            if [[ "$reward_count" == "2" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "Stone Vault frozen currency reward rows: $reward_count"
+          test "$reward_count" = "2"
+
+          item_count="0"
+          for _ in $(seq 1 50); do
+            item_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward_item i JOIN encounter_reward r ON r.reward_id = i.reward_id WHERE r.run_id = '$run_id'::uuid AND i.status = 'DELIVERED' AND i.item_key = 'stone_warden_shard' AND i.item_version = 1 AND i.item_material = 'AMETHYST_SHARD' AND i.item_amount = 1 AND i.delivery_token = i.reward_id AND i.item_payload IS NOT NULL AND i.item_sha256 ~ '^[0-9a-f]{64}$'")"
+            if [[ "$item_count" == "2" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "Stone Vault frozen item reward rows: $item_count"
+          test "$item_count" = "2"
+
+          total_reward_rows="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward WHERE run_id = '$run_id'::uuid")"
+          total_item_rows="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward_item i JOIN encounter_reward r ON r.reward_id = i.reward_id WHERE r.run_id = '$run_id'::uuid")"
+          echo "Stone Vault total reward rows=$total_reward_rows item rows=$total_item_rows"
+          test "$total_reward_rows" = "2"
+          test "$total_item_rows" = "2"
+
+          logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
+          echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=started run=$run_id activity=stone_vault participants=2"
+          echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=beat_completed run=$run_id beat=outer_seal"
+          echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=beat_completed run=$run_id beat=inner_guard"
+          echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=boss_activated run=$run_id boss=stone_warden participants=2"
+          echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=completed run=$run_id"
+
       - name: Show E2E logs on failure
         if: failure()
         run: |
