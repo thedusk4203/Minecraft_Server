@@ -1,5 +1,9 @@
 package dev.thedusk.minecraftserver;
 
+import dev.thedusk.minecraftserver.activity.DungeonCommandHandler;
+import dev.thedusk.minecraftserver.activity.StoneVaultActivityManager;
+import dev.thedusk.minecraftserver.activity.StructuredActivityDefinitionRegistry;
+import dev.thedusk.minecraftserver.activity.StructuredActivityRunRepository;
 import dev.thedusk.minecraftserver.admin.AdminCommandHandler;
 import dev.thedusk.minecraftserver.admin.AdminDiagnosticsService;
 import dev.thedusk.minecraftserver.audit.AuditLog;
@@ -7,6 +11,7 @@ import dev.thedusk.minecraftserver.boss.BossCommandHandler;
 import dev.thedusk.minecraftserver.boss.StoneWardenBossManager;
 import dev.thedusk.minecraftserver.economy.EconomyLedger;
 import dev.thedusk.minecraftserver.encounter.EncounterDefinitionRegistry;
+import dev.thedusk.minecraftserver.encounter.EncounterParticipantReservationRegistry;
 import dev.thedusk.minecraftserver.encounter.EncounterRunRepository;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.market.MarketCommandHandler;
@@ -49,10 +54,14 @@ public final class MinecraftServerCore extends JavaPlugin {
     private MarketPurchaseService marketPurchases;
     private EncounterDefinitionRegistry encounterDefinitions;
     private EncounterRunRepository encounterRuns;
+    private StructuredActivityDefinitionRegistry activityDefinitions;
+    private StructuredActivityRunRepository activityRuns;
+    private EncounterParticipantReservationRegistry encounterReservations;
     private StoneWardenRewardService bossRewards;
     private StoneWardenItemRewardRepository bossItemRewardRepository;
     private StoneWardenItemRewardService bossItemRewards;
     private StoneWardenBossManager bossManager;
+    private StoneVaultActivityManager stoneVaultManager;
     private BukkitTask bossRewardReconcileTask;
     private final AtomicBoolean bossRewardReconcileInFlight = new AtomicBoolean();
 
@@ -74,6 +83,10 @@ public final class MinecraftServerCore extends JavaPlugin {
 
             encounterDefinitions = EncounterDefinitionRegistry.load(getClass().getClassLoader());
             encounterRuns = new EncounterRunRepository(database, auditLog);
+            activityDefinitions = StructuredActivityDefinitionRegistry.load(getClass().getClassLoader());
+            activityRuns = new StructuredActivityRunRepository(database, auditLog);
+            encounterReservations = new EncounterParticipantReservationRegistry();
+
             UUID encounterRecoveryCorrelationId = UUID.randomUUID();
             int recoveredEncounterRuns = encounterRuns.recoverInterruptedRuns(
                     encounterRecoveryCorrelationId
@@ -96,6 +109,19 @@ public final class MinecraftServerCore extends JavaPlugin {
                     identities,
                     encounterDefinitions,
                     encounterRuns,
+                    encounterReservations,
+                    persistenceExecutor,
+                    getLogger()
+            );
+            stoneVaultManager = new StoneVaultActivityManager(
+                    this,
+                    identities,
+                    activityDefinitions,
+                    activityRuns,
+                    encounterDefinitions,
+                    encounterRuns,
+                    encounterReservations,
+                    bossManager,
                     persistenceExecutor,
                     getLogger()
             );
@@ -175,10 +201,12 @@ public final class MinecraftServerCore extends JavaPlugin {
                     this
             );
             getServer().getPluginManager().registerEvents(bossManager, this);
+            getServer().getPluginManager().registerEvents(stoneVaultManager, this);
 
             configureAdminCommand(diagnostics);
             configureMarketCommand();
             configureBossCommand();
+            configureDungeonCommand();
             startBossRewardReconciler();
 
             getLogger().info(
@@ -186,7 +214,9 @@ public final class MinecraftServerCore extends JavaPlugin {
                             + getServer().getMinecraftVersion()
                             + " with PostgreSQL persistence, onboarding, land protection, AuraSkills, durable market"
                             + " and " + encounterDefinitions.size() + " validated encounter definition(s)"
+                            + "; " + activityDefinitions.size() + " validated structured activity definition(s)"
                             + "; Stone Warden combat runtime=READY"
+                            + "; Stone Vault runtime=READY"
                             + "; recoveredEncounterRuns=" + recoveredEncounterRuns
                             + "; recoveryCorrelation=" + encounterRecoveryCorrelationId
                             + "; reconciledBossRewardRuns=" + reconciledBossRewardRuns
@@ -232,6 +262,16 @@ public final class MinecraftServerCore extends JavaPlugin {
         command.setExecutor(new BossCommandHandler(
                 Objects.requireNonNull(bossManager, "bossManager"),
                 Objects.requireNonNull(bossItemRewards, "bossItemRewards")
+        ));
+    }
+
+    private void configureDungeonCommand() {
+        PluginCommand command = Objects.requireNonNull(
+                getCommand("dungeon"),
+                "dungeon command must be declared in plugin.yml"
+        );
+        command.setExecutor(new DungeonCommandHandler(
+                Objects.requireNonNull(stoneVaultManager, "stoneVaultManager")
         ));
     }
 
@@ -292,6 +332,12 @@ public final class MinecraftServerCore extends JavaPlugin {
         }
         bossRewardReconcileInFlight.set(false);
 
+        StoneVaultActivityManager activeStoneVaultManager = stoneVaultManager;
+        stoneVaultManager = null;
+        if (activeStoneVaultManager != null) {
+            activeStoneVaultManager.close();
+        }
+
         StoneWardenBossManager activeBossManager = bossManager;
         bossManager = null;
         if (activeBossManager != null) {
@@ -301,6 +347,9 @@ public final class MinecraftServerCore extends JavaPlugin {
         bossItemRewards = null;
         bossItemRewardRepository = null;
         bossRewards = null;
+        activityRuns = null;
+        activityDefinitions = null;
+        encounterReservations = null;
         encounterRuns = null;
         encounterDefinitions = null;
         marketPurchases = null;
