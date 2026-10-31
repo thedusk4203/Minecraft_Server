@@ -1,6 +1,8 @@
 # Phase 4C2 — Crash-safe Stone Warden Item Reward Delivery
 
-Status: implementation in review
+Status: **complete / frozen**
+
+Freeze receipt: `docs/PHASE4C2_FREEZE.md`.
 
 ## Goal
 
@@ -128,3 +130,5 @@ Phase 4C2 is not complete until all of the following are green on one exact PR h
 - solo real-client Stone Warden completion with the shard visible in the client's inventory and one durable `DELIVERED` item row;
 - two-client party completion with the shard visible in both client inventories and exactly two durable `DELIVERED` item rows;
 - all frozen Phase 4A/4B/4C1 checks remain green.
+
+The frozen verification evidence is recorded in `docs/PHASE4C2_FREEZE.md`.

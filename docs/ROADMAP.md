@@ -250,7 +250,7 @@ Receipts:
 - Freeze receipt: `docs/PHASE4B_FREEZE.md`.
 
 ### Phase 4C — Boss Reward Delivery
-Status: in progress
+Status: complete / frozen
 
 Scope:
 - deterministic reward eligibility derived only from a completed durable boss run;
@@ -263,7 +263,7 @@ Scope:
 - failure-injection tests around every transaction boundary;
 - no dungeon expansion until reward delivery is proven.
 
-Exit gate:
+Exit gate met:
 - one completed Stone Warden run produces exactly one reward intent per eligible participant;
 - repeated finalization/recovery cannot mint a second currency or item reward;
 - an incomplete/failed/abandoned encounter cannot produce a reward;
@@ -298,7 +298,7 @@ Receipts:
 - Freeze receipt: `docs/PHASE4C1_FREEZE.md`.
 
 #### Phase 4C2 — Crash-safe Stone Warden Item Reward Delivery
-Status: next
+Status: complete / frozen
 
 Scope:
 - preserve the frozen Phase 4C1 currency contract unchanged;
@@ -314,7 +314,7 @@ Scope:
 - add concurrency and failure-injection integration coverage around item-state transitions;
 - extend solo and two-client real-client Stone Warden E2E through item receipt and durable delivery acknowledgement.
 
-Exit gate:
+Exit gate met:
 - every eligible completed Stone Warden participant receives at most one item for the frozen item definition/version;
 - repeated recovery never intentionally mints a second item;
 - crash after marked-playerdata persistence but before DB acknowledgement reuses the existing marker;
@@ -322,6 +322,38 @@ Exit gate:
 - full inventory leaves a recoverable pending delivery and does not discard the reward;
 - non-completed runs and players outside the canonical participant set cannot obtain an item intent;
 - all Phase 1–4C1 regression gates remain green.
+
+Receipts:
+- PR #20 implementation merged at `a12e52e63eb766fb619d955ca8cae1d53635a667`.
+- Implementation final head `6490cbdf939f24f461bb3bf3e35e90f780f315fc`.
+- Implementation CI `41060685800` attempt 2 succeeded.
+- PR #21 deterministic crossplay acquisition hardening merged at `8fc6cadee07fae4a9c5408c39e73ed97804add70`.
+- Hardening final head `22a29bb69402dc06d1ca22ab745c744b16fe1e65`.
+- Frozen merge-content CI `41086582597` succeeded on merge-ref `e0d45b9d0719fe558493b2c128d9dbc65dde9070`.
+- The verified merge-ref and actual frozen merge resolve to the same tree `54a5139eee4c8870fe41e584c6b16e4ddfd899ce`.
+- Freeze receipt: `docs/PHASE4C2_FREEZE.md`.
+
+### Phase 4D — First Structured PvE Activity
+Status: next
+
+Scope:
+- one short, replayable MVP dungeon or equivalent structured PvE activity;
+- explicit entry rule and party-size assumptions;
+- 2–3 encounter beats with a clear boss role;
+- consume the frozen Phase 4A durable encounter authority rather than creating a parallel lifecycle;
+- preserve the frozen Phase 4B Stone Warden combat and Phase 4C reward semantics while adding only the new content-specific behavior required by the activity;
+- clear reset, failure, disconnect and reconnect behavior;
+- deterministic, anti-duplication reward integration for the new activity;
+- data-driven content definitions where practical;
+- attempt/completion/failure and encounter-beat telemetry;
+- repeatable real-client party verification.
+
+Exit gate:
+- the activity has a documented entry rule, party contract and 2–3 readable encounter beats;
+- a small real-client party can enter, progress, complete the boss and receive deterministic rewards through server-authoritative paths;
+- restart/disconnect/failure/reset behavior cannot leave an active run or reward delivery in an ambiguous terminal state;
+- repeated completion/recovery cannot intentionally duplicate currency or item rewards;
+- the frozen Phase 4A–4C2 regression gates remain green.
 
 ## Phase 5 — Commerce and cosmetics
 Deliverables:
@@ -388,21 +420,18 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Implement **Phase 4C2 — Crash-safe Stone Warden Item Reward Delivery** as a separate reviewable change-set consuming the frozen Phase 4A/4B/4C1 contracts.
+Define and implement **Phase 4D — First Structured PvE Activity** as the next reviewable Phase 4 vertical slice consuming the frozen Phase 4A–4C2 contracts.
 
 Acceptance checklist:
-- do not change the frozen 250-COINS Phase 4C1 grant semantics;
-- define one concrete deterministic item key/version for Stone Warden completion;
-- bind one durable item-delivery identity to each eligible existing `encounter_reward` identity;
-- prepare durable item delivery before mutating Bukkit inventory;
-- use a stable marker/identity so reconnect/restart can recognize an already persisted pending item instead of minting another;
-- persist an integrity-checked marked item snapshot before delivery;
-- persist playerdata before terminal database delivery acknowledgement;
-- keep unresolved marked items protected from movement/use/drop/death loss;
-- add automatic reconnect/respawn recovery plus an explicit manual recovery command;
-- treat duplicate markers, ownership mismatch and payload/hash mismatch as fail-closed states requiring diagnostics;
-- add concurrency and final-boundary failure-injection integration tests;
-- extend admin diagnostics and reward telemetry with item-delivery state;
-- extend solo and two-client real-client E2E through item receipt and durable acknowledgement;
-- keep the market recovery contract and all existing regression gates green;
-- do not add dungeon content until Phase 4C2 is frozen.
+- choose one concrete MVP dungeon or equivalent structured activity without adding a second major game mode;
+- document its entry rule and party-size assumptions before runtime implementation;
+- define 2–3 encounter beats and one clear boss role with readable player-facing progression;
+- use the frozen durable encounter-run/participant lifecycle instead of inventing a parallel authority;
+- define reset, wipe/failure, disconnect, reconnect and server-restart behavior explicitly;
+- keep content data-driven where practical and validate semantic fingerprints/versioning;
+- integrate deterministic rewards without changing the frozen Stone Warden 250-COINS or shard semantics;
+- prevent replay/recovery from intentionally duplicating activity rewards;
+- emit telemetry for entry, beat progression, boss start, completion and failure;
+- add deterministic integration/failure-path coverage before E2E;
+- verify the full activity with a small real-client party through normal client-authored actions;
+- keep market recovery, crossplay and every frozen Phase 4A–4C2 regression gate green.
