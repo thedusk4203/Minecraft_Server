@@ -52,9 +52,12 @@ jobs:
           jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
           jar tf "$plugin_jar" | grep -qx 'db/migration/V7__encounter_rewards.sql'
           jar tf "$plugin_jar" | grep -qx 'db/migration/V8__encounter_reward_items.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V9__structured_activity_progress.sql'
           jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
           jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
           jar tf "$plugin_jar" | grep -qx 'encounters/stone_warden.properties'
+          jar tf "$plugin_jar" | grep -qx 'activities/index.txt'
+          jar tf "$plugin_jar" | grep -qx 'activities/stone_vault.properties'
 
       - name: Run PostgreSQL integration tests
         run: gradle integrationTest --no-daemon
@@ -79,13 +82,17 @@ jobs:
           encounter_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
           reward_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_reward') IS NOT NULL")"
           reward_item_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_reward_item') IS NOT NULL")"
+          activity_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.structured_activity_run') IS NOT NULL")"
           echo "encounter_run table exists: $encounter_table"
           echo "encounter_reward table exists: $reward_table"
           echo "encounter_reward_item table exists: $reward_item_table"
+          echo "structured_activity_run table exists: $activity_table"
           echo "$encounter_table" | grep -qx 't'
           echo "$reward_table" | grep -qx 't'
           echo "$reward_item_table" | grep -qx 't'
+          echo "$activity_table" | grep -qx 't'
           docker compose logs paper | grep -q 'validated encounter definition(s)'
+          docker compose logs paper | grep -q 'validated structured activity definition(s)'
 
       - name: Check Stone Warden runtime wiring
         run: |
@@ -98,6 +105,13 @@ jobs:
           docker compose logs paper | grep -q 'Stone Warden combat runtime=READY'
           docker compose logs paper | grep -q 'reconciledBossRewardRuns='
           docker compose logs paper | grep -q 'reconciledBossItemIntents='
+
+      - name: Check Stone Vault runtime wiring
+        run: |
+          dungeon="$(docker compose exec -T paper rcon-cli 'dungeon status')"
+          echo "$dungeon"
+          echo "$dungeon" | grep -q 'No active Stone Vault activity.'
+          docker compose logs paper | grep -q 'Stone Vault runtime=READY'
 
       - name: Check gameplay dependencies
         run: |

@@ -19,6 +19,10 @@ commands:
     description: Start, inspect or recover the Stone Warden encounter and rewards.
     usage: /boss <start [player...]|status|recover>
     permission: minecraftserver.boss
+  dungeon:
+    description: Start or inspect the Stone Vault structured PvE activity.
+    usage: /dungeon <start [player...]|status>
+    permission: minecraftserver.dungeon
 
 permissions:
   minecraftserver.admin:
@@ -29,4 +33,7 @@ permissions:
     default: true
   minecraftserver.boss:
     description: Allows players to start, inspect and recover the first PvE boss encounter.
+    default: true
+  minecraftserver.dungeon:
+    description: Allows players to start and inspect the Stone Vault structured PvE activity.
     default: true

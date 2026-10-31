@@ -2,19 +2,21 @@ package dev.thedusk.minecraftserver.boss;
 
 import dev.thedusk.minecraftserver.encounter.EncounterDefinition;
 import dev.thedusk.minecraftserver.encounter.EncounterDefinitionRegistry;
+import dev.thedusk.minecraftserver.encounter.EncounterParticipantReservationRegistry;
 import dev.thedusk.minecraftserver.encounter.EncounterRun;
 import dev.thedusk.minecraftserver.encounter.EncounterRunRepository;
 import dev.thedusk.minecraftserver.encounter.EncounterRunResult;
+import dev.thedusk.minecraftserver.encounter.EncounterRunStatus;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.PersistenceExecutor;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Objects;
-import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -64,6 +66,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
     private final PlayerIdentityRepository identities;
     private final EncounterDefinitionRegistry definitions;
     private final EncounterRunRepository encounterRuns;
+    private final EncounterParticipantReservationRegistry reservations;
     private final PersistenceExecutor persistenceExecutor;
     private final Logger logger;
     private final NamespacedKey runKey;
@@ -71,13 +74,13 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
     private final Map<UUID, Session> sessions = new HashMap<>();
     private final Map<UUID, UUID> bossEntityToRun = new HashMap<>();
     private final Map<UUID, UUID> playerToRun = new HashMap<>();
-    private final Set<UUID> pendingPlayers = new HashSet<>();
 
     public StoneWardenBossManager(
             JavaPlugin plugin,
             PlayerIdentityRepository identities,
             EncounterDefinitionRegistry definitions,
             EncounterRunRepository encounterRuns,
+            EncounterParticipantReservationRegistry reservations,
             PersistenceExecutor persistenceExecutor,
             Logger logger
     ) {
@@ -85,6 +88,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         this.identities = Objects.requireNonNull(identities, "identities");
         this.definitions = Objects.requireNonNull(definitions, "definitions");
         this.encounterRuns = Objects.requireNonNull(encounterRuns, "encounterRuns");
+        this.reservations = Objects.requireNonNull(reservations, "reservations");
         this.persistenceExecutor = Objects.requireNonNull(persistenceExecutor, "persistenceExecutor");
         this.logger = Objects.requireNonNull(logger, "logger");
         this.runKey = new NamespacedKey(plugin, "stone_warden_run");
@@ -97,18 +101,21 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
         EncounterDefinition definition = definitions.require(ENCOUNTER_ID);
         List<Player> participants = normalizeParticipants(leader, requestedParticipants, definition);
-        for (Player participant : participants) {
-            UUID uuid = participant.getUniqueId();
-            if (playerToRun.containsKey(uuid) || pendingPlayers.contains(uuid)) {
-                leader.sendMessage("§c" + participant.getName() + " đang ở trong một encounter khác.");
-                return;
-            }
+        List<UUID> participantUuids = participants.stream().map(Player::getUniqueId).toList();
+        Optional<UUID> conflict = reservations.tryReserve(participantUuids);
+        if (conflict.isPresent()) {
+            String name = participants.stream()
+                    .filter(player -> player.getUniqueId().equals(conflict.orElseThrow()))
+                    .map(Player::getName)
+                    .findFirst()
+                    .orElse(conflict.orElseThrow().toString());
+            leader.sendMessage("§c" + name + " đang ở trong một encounter khác.");
+            return;
         }
 
         List<ParticipantSeed> seeds = participants.stream()
                 .map(player -> new ParticipantSeed(player.getUniqueId(), player.getName()))
                 .toList();
-        seeds.forEach(seed -> pendingPlayers.add(seed.minecraftUuid()));
         UUID startCorrelationId = UUID.randomUUID();
 
         leader.sendMessage("§7Đang tạo Stone Warden encounter...");
@@ -131,6 +138,71 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 });
     }
 
+    /**
+     * Activates Stone Warden combat on an already-created durable encounter run.
+     * No encounter row or participant row is created here; the supplied run remains authority.
+     */
+    public boolean activateExistingRun(
+            EncounterRun run,
+            List<UUID> canonicalParticipantUuids,
+            Location arenaCenter,
+            TerminalListener terminalListener
+    ) {
+        requirePrimaryThread();
+        Objects.requireNonNull(run, "run");
+        Objects.requireNonNull(canonicalParticipantUuids, "canonicalParticipantUuids");
+        Objects.requireNonNull(arenaCenter, "arenaCenter");
+        Objects.requireNonNull(terminalListener, "terminalListener");
+
+        EncounterDefinition definition = definitions.require(ENCOUNTER_ID);
+        List<UUID> participants = normalizeCanonicalParticipants(canonicalParticipantUuids, definition);
+        if (!run.encounterId().equals(definition.id())
+                || run.encounterVersion() != definition.version()
+                || !run.definitionSha256().equals(definition.definitionSha256())
+                || run.status() != EncounterRunStatus.ACTIVE
+                || run.participantPlayerIds().size() != participants.size()) {
+            logger.warning("Rejected Stone Warden existing-run activation due to authority mismatch: "
+                    + run.runId());
+            return false;
+        }
+        if (!reservations.areAllReserved(participants)) {
+            logger.warning("Rejected Stone Warden existing-run activation without participant reservation: "
+                    + run.runId());
+            return false;
+        }
+        if (sessions.containsKey(run.runId())
+                || participants.stream().anyMatch(playerToRun::containsKey)) {
+            logger.warning("Rejected duplicate Stone Warden runtime activation for run " + run.runId());
+            return false;
+        }
+
+        World world = arenaCenter.getWorld();
+        if (world == null) {
+            return false;
+        }
+        List<Player> availableParticipants = participants.stream()
+                .map(Bukkit::getPlayer)
+                .filter(Objects::nonNull)
+                .filter(Player::isOnline)
+                .filter(player -> !player.isDead())
+                .filter(player -> player.getWorld() == world)
+                .toList();
+        if (availableParticipants.isEmpty()) {
+            logger.warning("Rejected Stone Warden existing-run activation with no available participants: "
+                    + run.runId());
+            return false;
+        }
+
+        return spawnSession(
+                run,
+                definition,
+                participants,
+                availableParticipants,
+                arenaCenter,
+                terminalListener
+        );
+    }
+
     public String status() {
         requirePrimaryThread();
         if (sessions.isEmpty()) {
@@ -141,7 +213,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
     public boolean isParticipant(UUID minecraftUuid) {
         requirePrimaryThread();
-        return playerToRun.containsKey(minecraftUuid) || pendingPlayers.contains(minecraftUuid);
+        return reservations.isReserved(minecraftUuid);
     }
 
     private void finishStart(
@@ -152,10 +224,10 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             Throwable failure
     ) {
         requirePrimaryThread();
-        seeds.forEach(seed -> pendingPlayers.remove(seed.minecraftUuid()));
-
+        List<UUID> participantUuids = seeds.stream().map(ParticipantSeed::minecraftUuid).toList();
         Player leader = Bukkit.getPlayer(leaderUuid);
         if (failure != null) {
+            reservations.release(participantUuids);
             logger.log(Level.SEVERE, "Failed to persist Stone Warden encounter start", failure);
             if (leader != null) {
                 leader.sendMessage("§cKhông thể tạo boss encounter. Không có boss nào được spawn.");
@@ -163,6 +235,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             return;
         }
         if (result == null) {
+            reservations.release(participantUuids);
             logger.severe("Stone Warden start completed without a result");
             return;
         }
@@ -171,6 +244,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         for (ParticipantSeed seed : seeds) {
             Player player = Bukkit.getPlayer(seed.minecraftUuid());
             if (player == null || !player.isOnline() || player.isDead()) {
+                reservations.release(participantUuids);
                 failPersistedStart(result.run().runId(), "START_PARTICIPANT_UNAVAILABLE");
                 if (leader != null) {
                     leader.sendMessage("§cEncounter bị hủy vì một thành viên không còn sẵn sàng.");
@@ -178,6 +252,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 return;
             }
             if (playerToRun.containsKey(player.getUniqueId())) {
+                reservations.release(participantUuids);
                 failPersistedStart(result.run().runId(), "START_PARTICIPANT_CONFLICT");
                 return;
             }
@@ -186,21 +261,35 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
         World world = onlineParticipants.getFirst().getWorld();
         if (onlineParticipants.stream().anyMatch(player -> player.getWorld() != world)) {
+            reservations.release(participantUuids);
             failPersistedStart(result.run().runId(), "START_PARTICIPANT_WORLD_MISMATCH");
             return;
         }
 
-        spawnSession(result.run(), definition, onlineParticipants);
+        Location arenaCenter = onlineParticipants.getFirst().getLocation().clone();
+        boolean spawned = spawnSession(
+                result.run(),
+                definition,
+                participantUuids,
+                onlineParticipants,
+                arenaCenter,
+                null
+        );
+        if (!spawned) {
+            reservations.release(participantUuids);
+            failPersistedStart(result.run().runId(), "BOSS_SPAWN_FAILED");
+        }
     }
 
-    private void spawnSession(
+    private boolean spawnSession(
             EncounterRun run,
             EncounterDefinition definition,
-            List<Player> participants
+            List<UUID> canonicalParticipants,
+            List<Player> availableParticipants,
+            Location arenaCenter,
+            TerminalListener terminalListener
     ) {
         requirePrimaryThread();
-        Player leader = participants.getFirst();
-        Location arenaCenter = leader.getLocation().clone();
         Location bossSpawn = arenaCenter.clone().add(4.0, 0.0, 0.0);
         if (!bossSpawn.getBlock().isPassable()) {
             bossSpawn = arenaCenter.clone().add(0.0, 1.0, 0.0);
@@ -215,9 +304,9 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             boss.customName(Component.text("Stone Warden"));
             boss.setCustomNameVisible(true);
 
-            double maxHealth = StoneWardenCombatRules.maxHealth(participants.size());
+            double maxHealth = StoneWardenCombatRules.maxHealth(canonicalParticipants.size());
             setAttribute(boss, Attribute.MAX_HEALTH, maxHealth);
-            setAttribute(boss, Attribute.ATTACK_DAMAGE, 8.0 + participants.size());
+            setAttribute(boss, Attribute.ATTACK_DAMAGE, 8.0 + canonicalParticipants.size());
             setAttribute(boss, Attribute.MOVEMENT_SPEED, 0.27);
             boss.setHealth(maxHealth);
             boss.getPersistentDataContainer().set(
@@ -230,31 +319,32 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 boss.remove();
             }
             logger.log(Level.SEVERE, "Failed to spawn Stone Warden for run " + run.runId(), exception);
-            failPersistedStart(run.runId(), "BOSS_SPAWN_FAILED");
-            return;
+            return false;
         }
 
         BossBar bossBar = Bukkit.createBossBar("Stone Warden", BarColor.WHITE, BarStyle.SEGMENTED_10);
-        participants.forEach(bossBar::addPlayer);
+        availableParticipants.forEach(bossBar::addPlayer);
 
         Session session = new Session(
                 run.runId(),
                 definition,
                 boss.getUniqueId(),
-                participants.stream().map(Player::getUniqueId).toList(),
+                canonicalParticipants,
                 arenaCenter,
-                bossBar
+                bossBar,
+                terminalListener
         );
         sessions.put(run.runId(), session);
         bossEntityToRun.put(boss.getUniqueId(), run.runId());
         session.participants().forEach(uuid -> playerToRun.put(uuid, run.runId()));
 
         session.task = Bukkit.getScheduler().runTaskTimer(plugin, () -> tick(session), 1L, 1L);
-        for (Player player : participants) {
+        for (Player player : availableParticipants) {
             player.sendMessage("§6Stone Warden đã thức tỉnh. §7Giữ trong bán kính arena và để ý telegraph.");
         }
         logger.info("BOSS_TELEMETRY event=started run=" + run.runId()
-                + " boss=stone_warden participants=" + participants.size());
+                + " boss=stone_warden participants=" + canonicalParticipants.size());
+        return true;
     }
 
     private void tick(Session session) {
@@ -531,6 +621,13 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                             + " slams=" + session.slamCount
                             + " charges=" + session.chargeCount
                             + (reason == null ? "" : " reason=" + reason));
+                    TerminalListener terminalListener = session.terminalListener();
+                    if (terminalListener != null && plugin.isEnabled()) {
+                        Bukkit.getScheduler().runTask(
+                                plugin,
+                                () -> terminalListener.onTerminal(session.runId(), completed, reason)
+                        );
+                    }
                 });
     }
 
@@ -548,6 +645,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         sessions.remove(session.runId());
         bossEntityToRun.remove(session.bossEntityId());
         session.participants().forEach(uuid -> playerToRun.remove(uuid, session.runId()));
+        reservations.release(session.participants());
         if (session.task != null) {
             session.task.cancel();
         }
@@ -692,6 +790,25 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         return List.copyOf(normalized);
     }
 
+    private static List<UUID> normalizeCanonicalParticipants(
+            List<UUID> canonicalParticipantUuids,
+            EncounterDefinition definition
+    ) {
+        LinkedHashSet<UUID> unique = new LinkedHashSet<>();
+        for (UUID participantUuid : canonicalParticipantUuids) {
+            unique.add(Objects.requireNonNull(participantUuid, "participantUuid"));
+        }
+        if (unique.size() != canonicalParticipantUuids.size()) {
+            throw new IllegalArgumentException("canonicalParticipantUuids must not contain duplicates");
+        }
+        if (unique.size() < definition.minPlayers() || unique.size() > definition.maxPlayers()) {
+            throw new IllegalArgumentException(
+                    "Stone Warden requires " + definition.minPlayers() + "-" + definition.maxPlayers() + " players"
+            );
+        }
+        return List.copyOf(unique);
+    }
+
     private static void setAttribute(IronGolem boss, Attribute attribute, double value) {
         AttributeInstance instance = boss.getAttribute(attribute);
         if (instance == null) {
@@ -718,7 +835,11 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             session.terminalRequested = true;
             cleanupLocal(session, false);
         }
-        pendingPlayers.clear();
+    }
+
+    @FunctionalInterface
+    public interface TerminalListener {
+        void onTerminal(UUID runId, boolean completed, String reason);
     }
 
     private record ParticipantSeed(UUID minecraftUuid, String playerName) {
@@ -734,6 +855,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         private final List<UUID> participants;
         private final Location arenaCenter;
         private final BossBar bossBar;
+        private final TerminalListener terminalListener;
 
         private BukkitTask task;
         private long ticks;
@@ -752,7 +874,8 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 UUID bossEntityId,
                 List<UUID> participants,
                 Location arenaCenter,
-                BossBar bossBar
+                BossBar bossBar,
+                TerminalListener terminalListener
         ) {
             this.runId = runId;
             this.definition = definition;
@@ -760,6 +883,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
             this.participants = List.copyOf(participants);
             this.arenaCenter = arenaCenter.clone();
             this.bossBar = bossBar;
+            this.terminalListener = terminalListener;
         }
 
         private UUID runId() {
@@ -784,6 +908,10 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
         private BossBar bossBar() {
             return bossBar;
+        }
+
+        private TerminalListener terminalListener() {
+            return terminalListener;
         }
     }
 }
