@@ -245,16 +245,22 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
         for (ParticipantSeed seed : seeds) {
             Player player = Bukkit.getPlayer(seed.minecraftUuid());
             if (player == null || !player.isOnline() || player.isDead()) {
-                reservations.release(participantUuids);
-                failPersistedStart(result.run().runId(), "START_PARTICIPANT_UNAVAILABLE");
+                failPersistedStart(
+                        result.run().runId(),
+                        "START_PARTICIPANT_UNAVAILABLE",
+                        participantUuids
+                );
                 if (leader != null) {
                     leader.sendMessage("§cStone Vault bị hủy vì một thành viên không còn sẵn sàng.");
                 }
                 return;
             }
             if (playerToRun.containsKey(player.getUniqueId())) {
-                reservations.release(participantUuids);
-                failPersistedStart(result.run().runId(), "START_PARTICIPANT_CONFLICT");
+                failPersistedStart(
+                        result.run().runId(),
+                        "START_PARTICIPANT_CONFLICT",
+                        participantUuids
+                );
                 return;
             }
             onlineParticipants.add(player);
@@ -262,8 +268,7 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
 
         Player activeLeader = Bukkit.getPlayer(leaderUuid);
         if (activeLeader == null || !activeLeader.isOnline() || activeLeader.isDead()) {
-            reservations.release(participantUuids);
-            failPersistedStart(result.run().runId(), "START_LEADER_UNAVAILABLE");
+            failPersistedStart(result.run().runId(), "START_LEADER_UNAVAILABLE", participantUuids);
             return;
         }
         World world = activeLeader.getWorld();
@@ -271,8 +276,11 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
         for (Player player : onlineParticipants) {
             if (player.getWorld() != world
                     || player.getLocation().distanceSquared(arenaCenter) > ENTRY_RADIUS * ENTRY_RADIUS) {
-                reservations.release(participantUuids);
-                failPersistedStart(result.run().runId(), "START_PARTICIPANT_WORLD_OR_DISTANCE_MISMATCH");
+                failPersistedStart(
+                        result.run().runId(),
+                        "START_PARTICIPANT_WORLD_OR_DISTANCE_MISMATCH",
+                        participantUuids
+                );
                 activeLeader.sendMessage("§cStone Vault bị hủy vì party không còn ở cùng khu vực.");
                 return;
             }
@@ -604,7 +612,7 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
         }
         session.terminalRequested = true;
         broadcast(session, "§cStone Vault thất bại và đã reset.");
-        cleanupActivityState(session, true, true);
+        cleanupActivityState(session, true, false);
 
         UUID correlationId = UUID.randomUUID();
         persistenceExecutor.submit(() -> encounterRuns.fail(
@@ -621,12 +629,13 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
                         );
                         return;
                     }
+                    reservations.release(session.participants());
                     logger.info("ACTIVITY_TELEMETRY event=failed run=" + session.run().runId()
                             + " reason=" + reason);
                 });
     }
 
-    private void failPersistedStart(UUID runId, String reason) {
+    private void failPersistedStart(UUID runId, String reason, List<UUID> participantUuids) {
         UUID correlationId = UUID.randomUUID();
         persistenceExecutor.submit(() -> encounterRuns.fail(runId, correlationId, reason))
                 .whenComplete((result, failure) -> {
@@ -636,7 +645,9 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
                                 "Failed to mark unspawned Stone Vault failed: " + runId,
                                 failure
                         );
+                        return;
                     }
+                    reservations.release(participantUuids);
                 });
     }
 
