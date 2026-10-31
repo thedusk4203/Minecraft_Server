@@ -2,6 +2,7 @@
 
 const { execFileSync } = require('node:child_process');
 const mineflayer = require('mineflayer');
+const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
 
 const LEADER_NAME = 'StoneWardenLead';
 const MATE_NAME = 'StoneWardenMate';
@@ -75,6 +76,10 @@ function horizontalDistance(first, second) {
   return Math.sqrt(dx * dx + dz * dz);
 }
 
+function partyDistance(first, second) {
+  return first.distanceTo(second);
+}
+
 function createTrackedBot(username) {
   const bot = mineflayer.createBot({
     host: BOT_HOST,
@@ -84,6 +89,7 @@ function createTrackedBot(username) {
     auth: 'offline',
     hideErrors: false
   });
+  bot.loadPlugin(pathfinder);
   installClientTickEndCompatibility(bot);
 
   let kickedReason = null;
@@ -165,11 +171,48 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
   }
 }
 
+async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
+  const { bot, username } = tracked;
+  assertConnected(tracked, 'before pathfinding convergence');
+  assertConnected(targetTracked, 'before pathfinding convergence target');
+
+  const target = targetTracked.bot.entity.position.clone();
+  const movements = new Movements(bot);
+  movements.canDig = false;
+  movements.allow1by1towers = false;
+  bot.pathfinder.setMovements(movements);
+
+  const goalRadius = Math.max(2, Math.floor(stopDistance - 1));
+  const goal = new GoalNear(
+    Math.floor(target.x),
+    Math.floor(target.y),
+    Math.floor(target.z),
+    goalRadius
+  );
+
+  try {
+    await Promise.race([
+      bot.pathfinder.goto(goal),
+      sleep(timeoutMs).then(() => {
+        throw new Error(`${username} pathfinding convergence timed out after ${timeoutMs}ms`);
+      })
+    ]);
+  } catch (error) {
+    console.log(`${username} pathfinding convergence fallback: ${error.message || error}`);
+  } finally {
+    bot.pathfinder.stop();
+  }
+
+  assertConnected(tracked, 'after pathfinding convergence');
+  assertConnected(targetTracked, 'after pathfinding convergence target');
+  return partyDistance(bot.entity.position, targetTracked.bot.entity.position) <= stopDistance;
+}
+
 async function convergePartyClients(leader, mate) {
   assertConnected(leader, 'before convergence');
   assertConnected(mate, 'before convergence');
 
-  if (horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+  if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
     return true;
   }
 
@@ -179,22 +222,27 @@ async function convergePartyClients(leader, mate) {
     : [[mate, leader], [leader, mate]];
 
   for (const [mover, target] of attempts) {
-    const before = horizontalDistance(leader.bot.entity.position, mate.bot.entity.position);
+    const before = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
     console.log(
       `Party convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
     );
-    const converged = await walkToward(
+
+    if (await pathfindToward(mover, target, PARTY_CONVERGENCE_DISTANCE, 20_000)) {
+      return true;
+    }
+
+    await walkToward(
       mover,
       () => target.bot.entity?.position,
       PARTY_CONVERGENCE_DISTANCE,
-      10_000
+      7_500
     );
-    if (converged) {
+    if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
       return true;
     }
   }
 
-  return horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
+  return partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
 }
 
 async function keepNearStart(tracked, start) {
@@ -223,7 +271,7 @@ async function main() {
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
       throw new Error(
-        `Party clients could not converge within start boundary; distance=${horizontalDistance(
+        `Party clients could not converge within start boundary; distance=${partyDistance(
           leader.bot.entity.position,
           mate.bot.entity.position
         ).toFixed(2)}`
@@ -231,7 +279,7 @@ async function main() {
     }
     assertConnected(leader, 'before party start');
     assertConnected(mate, 'before party start');
-    console.log(`Party clients converged; distance=${horizontalDistance(
+    console.log(`Party clients converged; distance=${partyDistance(
       leader.bot.entity.position,
       mate.bot.entity.position
     ).toFixed(2)} blocks.`);
