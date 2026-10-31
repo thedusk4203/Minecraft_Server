@@ -2,6 +2,7 @@
 
 const { execFileSync } = require('node:child_process');
 const mineflayer = require('mineflayer');
+const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
 
 const LEADER_NAME = 'StoneVaultLead';
 const MATE_NAME = 'StoneVaultMate';
@@ -11,7 +12,7 @@ const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const ATTACK_REACH = 3.6;
-const PARTY_CONVERGENCE_DISTANCE = 9.0;
+const PARTY_CONVERGENCE_DISTANCE = 10.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 function sleep(ms) {
@@ -62,6 +63,10 @@ function horizontalDistance(first, second) {
   return Math.sqrt(dx * dx + dz * dz);
 }
 
+function partyDistance(first, second) {
+  return first.distanceTo(second);
+}
+
 function normalizedEntityName(entity) {
   return String(entity?.name || entity?.displayName || '').toLowerCase().replaceAll('_', '');
 }
@@ -94,6 +99,7 @@ function createTrackedBot(username) {
     auth: 'offline',
     hideErrors: false
   });
+  bot.loadPlugin(pathfinder);
   installClientTickEndCompatibility(bot);
 
   let kickedReason = null;
@@ -173,26 +179,78 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
   }
 }
 
+async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
+  const { bot, username } = tracked;
+  assertConnected(tracked, 'before pathfinding convergence');
+  assertConnected(targetTracked, 'before pathfinding convergence target');
+
+  const target = targetTracked.bot.entity.position.clone();
+  const movements = new Movements(bot);
+  movements.canDig = false;
+  movements.allow1by1towers = false;
+  bot.pathfinder.setMovements(movements);
+
+  const goalRadius = Math.max(2, Math.floor(stopDistance - 1));
+  const goal = new GoalNear(
+    Math.floor(target.x),
+    Math.floor(target.y),
+    Math.floor(target.z),
+    goalRadius
+  );
+
+  try {
+    await Promise.race([
+      bot.pathfinder.goto(goal),
+      sleep(timeoutMs).then(() => {
+        throw new Error(`${username} pathfinding convergence timed out after ${timeoutMs}ms`);
+      })
+    ]);
+  } catch (error) {
+    console.log(`${username} pathfinding convergence fallback: ${error.message || error}`);
+  } finally {
+    bot.pathfinder.stop();
+  }
+
+  assertConnected(tracked, 'after pathfinding convergence');
+  assertConnected(targetTracked, 'after pathfinding convergence target');
+  return partyDistance(bot.entity.position, targetTracked.bot.entity.position) <= stopDistance;
+}
+
 async function convergePartyClients(leader, mate) {
-  if (horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+  assertConnected(leader, 'before Stone Vault convergence');
+  assertConnected(mate, 'before Stone Vault convergence');
+
+  if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
     return true;
   }
+
   const leaderHigher = leader.bot.entity.position.y >= mate.bot.entity.position.y;
   const attempts = leaderHigher
     ? [[leader, mate], [mate, leader]]
     : [[mate, leader], [leader, mate]];
+
   for (const [mover, target] of attempts) {
-    const converged = await walkToward(
+    const before = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+    console.log(
+      `Stone Vault convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
+    );
+
+    if (await pathfindToward(mover, target, PARTY_CONVERGENCE_DISTANCE, 20_000)) {
+      return true;
+    }
+
+    await walkToward(
       mover,
       () => target.bot.entity?.position,
       PARTY_CONVERGENCE_DISTANCE,
-      10_000
+      7_500
     );
-    if (converged) {
+    if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
       return true;
     }
   }
-  return horizontalDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
+
+  return partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
 }
 
 function nearbyNewEntities(tracked, seenIds, predicate, radius = 36) {
@@ -263,13 +321,13 @@ async function main() {
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
       throw new Error(
-        `Stone Vault party could not converge within start boundary; distance=${horizontalDistance(
+        `Stone Vault party could not converge within start boundary; distance=${partyDistance(
           leader.bot.entity.position,
           mate.bot.entity.position
         ).toFixed(2)}`
       );
     }
-    console.log(`Stone Vault party converged; distance=${horizontalDistance(
+    console.log(`Stone Vault party converged; distance=${partyDistance(
       leader.bot.entity.position,
       mate.bot.entity.position
     ).toFixed(2)} blocks.`);
