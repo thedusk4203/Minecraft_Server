@@ -1,6 +1,7 @@
 'use strict';
 
 const { execFileSync } = require('node:child_process');
+const { appendFileSync } = require('node:fs');
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder');
 
@@ -15,6 +16,13 @@ const ATTACK_REACH = 3.6;
 const PARTY_CONVERGENCE_DISTANCE = 9.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
+const diagnostic = {
+  phase: 'startup',
+  leader: null,
+  mate: null,
+  bossId: null
+};
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -25,6 +33,14 @@ function rcon(command) {
     ['compose', '-f', COMPOSE_FILE, 'exec', '-T', PAPER_SERVICE, 'rcon-cli', command],
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
   ).trim();
+}
+
+function safeRcon(command) {
+  try {
+    return rcon(command);
+  } catch (error) {
+    return `unavailable: ${error.message || error}`;
+  }
 }
 
 function installClientTickEndCompatibility(bot) {
@@ -78,6 +94,49 @@ function horizontalDistance(first, second) {
 
 function partyDistance(first, second) {
   return first.distanceTo(second);
+}
+
+function formatPosition(tracked) {
+  const position = tracked?.bot?.entity?.position;
+  if (!position) {
+    return 'unavailable';
+  }
+  return `${position.x.toFixed(2)},${position.y.toFixed(2)},${position.z.toFixed(2)}`;
+}
+
+function writeFailureSummary(error) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) {
+    return;
+  }
+
+  const leader = diagnostic.leader;
+  const mate = diagnostic.mate;
+  let distance = 'unavailable';
+  if (leader?.bot?.entity?.position && mate?.bot?.entity?.position) {
+    distance = partyDistance(leader.bot.entity.position, mate.bot.entity.position).toFixed(2);
+  }
+
+  const lines = [
+    '### Stone Warden party E2E diagnostic',
+    '',
+    `- phase: \`${diagnostic.phase}\``,
+    `- error: \`${String(error?.message || error).replace(/`/g, "'")}\``,
+    `- leader position: \`${formatPosition(leader)}\``,
+    `- mate position: \`${formatPosition(mate)}\``,
+    `- party distance: \`${distance}\``,
+    `- boss entity id: \`${diagnostic.bossId ?? 'unavailable'}\``,
+    `- boss status: \`${safeRcon('boss status').replace(/`/g, "'")}\``,
+    `- leader shard: \`${leader ? hasStoneWardenShard(leader) : false}\``,
+    `- mate shard: \`${mate ? hasStoneWardenShard(mate) : false}\``,
+    ''
+  ];
+
+  try {
+    appendFileSync(summaryPath, `${lines.join('\n')}\n`, 'utf8');
+  } catch (summaryError) {
+    console.error('Failed to write GitHub step summary:', summaryError);
+  }
 }
 
 function createTrackedBot(username) {
@@ -255,19 +314,42 @@ async function keepNearStart(tracked, start) {
   }
 }
 
+async function attackBossOnce(tracked, bossId, context) {
+  assertConnected(tracked, context);
+  const inReach = await walkToward(
+    tracked,
+    () => tracked.bot.entities[bossId]?.position,
+    ATTACK_REACH,
+    2_500
+  );
+  const target = tracked.bot.entities[bossId];
+  if (!inReach || !target) {
+    return false;
+  }
+
+  await tracked.bot.lookAt(target.position.offset(0, 1.0, 0), true);
+  tracked.bot.attack(target, true);
+  return true;
+}
+
 async function main() {
   const leader = createTrackedBot(LEADER_NAME);
+  diagnostic.leader = leader;
   let mate = null;
 
   try {
+    diagnostic.phase = 'leader-spawn';
     await awaitSpawn(leader);
     console.log(`${LEADER_NAME} spawned; waiting for Paper connection throttle window to clear.`);
     await sleep(CONNECTION_THROTTLE_CLEAR_MS);
 
+    diagnostic.phase = 'mate-spawn';
     mate = createTrackedBot(MATE_NAME);
+    diagnostic.mate = mate;
     await awaitSpawn(mate);
     console.log(`Party bots spawned: ${LEADER_NAME}, ${MATE_NAME} via ${BOT_VERSION} -> ViaProxy -> Paper 26.3`);
 
+    diagnostic.phase = 'party-convergence';
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
       throw new Error(
@@ -293,6 +375,7 @@ async function main() {
       rcon(`effect give ${name} minecraft:regeneration 120 4 true`);
     }
 
+    diagnostic.phase = 'boss-start';
     leader.bot.chat(`/boss start ${MATE_NAME}`);
 
     const boss = await waitFor('party Stone Warden iron golem entity', () => {
@@ -302,14 +385,21 @@ async function main() {
           && entity.position.distanceTo(leader.bot.entity.position) <= 32;
       });
     }, 25_000, 100);
+    diagnostic.bossId = boss.id;
 
-    console.log(`Party Stone Warden entity observed: id=${boss.id}`);
+    await waitFor('party Stone Warden entity on mate client', () => {
+      const mateBoss = mate.bot.entities[boss.id];
+      return mateBoss && isIronGolem(mateBoss) ? mateBoss : null;
+    }, 10_000, 100);
+
+    console.log(`Party Stone Warden entity observed by both clients: id=${boss.id}`);
 
     const active = rcon('boss status');
     if (!active.includes('Active Stone Warden encounters: 1')) {
       throw new Error(`Party boss was not active after start: ${active}`);
     }
 
+    diagnostic.phase = 'mechanic-window';
     const mechanicDeadline = Date.now() + 16_000;
     while (Date.now() < mechanicDeadline) {
       await keepNearStart(leader, leaderStart);
@@ -321,6 +411,27 @@ async function main() {
     assertConnected(mate, 'after party mechanic window');
     console.log('Both party clients remained connected through the mechanic window.');
 
+    diagnostic.phase = 'mate-contribution';
+    rcon(`effect give ${MATE_NAME} minecraft:strength 60 5 true`);
+    let mateHits = 0;
+    const mateContributionDeadline = Date.now() + 12_000;
+    while (Date.now() < mateContributionDeadline && mateHits < 2) {
+      if (safeRcon('boss status').includes('No active Stone Warden encounter.')) {
+        break;
+      }
+      if (await attackBossOnce(mate, boss.id, 'during mate contribution verification')) {
+        mateHits++;
+        console.log(`${MATE_NAME} client-authored boss hit ${mateHits}/2.`);
+        await sleep(700);
+      } else {
+        await sleep(200);
+      }
+    }
+    if (mateHits < 2) {
+      throw new Error(`Mate did not land required client-authored contribution hits; hits=${mateHits}`);
+    }
+
+    diagnostic.phase = 'two-client-kill';
     rcon(`effect give ${LEADER_NAME} minecraft:strength 60 20 true`);
 
     const killDeadline = Date.now() + 35_000;
@@ -330,6 +441,7 @@ async function main() {
 
       const status = rcon('boss status');
       if (status.includes('No active Stone Warden encounter.')) {
+        diagnostic.phase = 'reward-delivery';
         console.log('Party Stone Warden runtime reports no active encounter after client attacks.');
         await waitFor(
           'Stone Warden Shard in both real client inventories',
@@ -338,34 +450,28 @@ async function main() {
           250
         );
         console.log('Stone Warden Shard observed in both party client inventories.');
+        diagnostic.phase = 'complete';
         await sleep(500);
         return;
       }
 
-      const current = leader.bot.entities[boss.id];
-      if (!current) {
-        await sleep(250);
-        continue;
+      const mateAttacked = await attackBossOnce(mate, boss.id, 'during mate party kill verification');
+      if (mateAttacked) {
+        await sleep(550);
       }
 
-      const inReach = await walkToward(
-        leader,
-        () => leader.bot.entities[boss.id]?.position,
-        ATTACK_REACH,
-        2_500
-      );
-      const target = leader.bot.entities[boss.id];
-      if (!inReach || !target) {
+      const leaderAttacked = await attackBossOnce(leader, boss.id, 'during leader party kill verification');
+      if (leaderAttacked) {
+        await sleep(550);
+      } else if (!mateAttacked) {
         await sleep(200);
-        continue;
       }
-
-      await leader.bot.lookAt(target.position.offset(0, 1.0, 0), true);
-      leader.bot.attack(target, true);
-      await sleep(550);
     }
 
     throw new Error(`Party Stone Warden was not completed within kill deadline; status=${rcon('boss status')}`);
+  } catch (error) {
+    writeFailureSummary(error);
+    throw error;
   } finally {
     for (const tracked of [leader, mate].filter(Boolean)) {
       try {
