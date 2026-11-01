@@ -12,7 +12,7 @@ const BOT_PORT = Number(process.env.E2E_BOT_PORT || '25568');
 const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
-const ATTACK_REACH = 3.6;
+const BOSS_MELEE_DISTANCE = 2.75;
 const PARTY_CONVERGENCE_DISTANCE = 9.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
@@ -230,6 +230,45 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
   }
 }
 
+async function walkIntoBossMeleeRange(tracked, bossId, timeoutMs) {
+  const { bot } = tracked;
+  const deadline = Date.now() + timeoutMs;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let lastProgressAt = Date.now();
+  bot.setControlState('sprint', true);
+
+  try {
+    while (Date.now() < deadline) {
+      assertConnected(tracked, 'while approaching Stone Warden');
+      const target = bot.entities[bossId];
+      if (!target) {
+        return false;
+      }
+
+      const distance = bot.entity.position.distanceTo(target.position);
+      if (distance <= BOSS_MELEE_DISTANCE) {
+        return true;
+      }
+      if (distance + 0.1 < bestDistance) {
+        bestDistance = distance;
+        lastProgressAt = Date.now();
+      }
+
+      await bot.lookAt(target.position.offset(0, 1.0, 0), true);
+      bot.setControlState('forward', true);
+      const climbingTowardTarget = target.position.y - bot.entity.position.y > 0.8;
+      const movementStalled = Date.now() - lastProgressAt > 650;
+      bot.setControlState('jump', bot.entity.onGround && (climbingTowardTarget || movementStalled));
+      await sleep(100);
+    }
+    return false;
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    bot.setControlState('sprint', false);
+  }
+}
+
 async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
   const { bot, username } = tracked;
   assertConnected(tracked, 'before pathfinding convergence');
@@ -316,14 +355,14 @@ async function keepNearStart(tracked, start) {
 
 async function attackBossOnce(tracked, bossId, context) {
   assertConnected(tracked, context);
-  const inReach = await walkToward(
-    tracked,
-    () => tracked.bot.entities[bossId]?.position,
-    ATTACK_REACH,
-    2_500
-  );
+  const inReach = await walkIntoBossMeleeRange(tracked, bossId, 3_500);
   const target = tracked.bot.entities[bossId];
   if (!inReach || !target) {
+    return false;
+  }
+
+  const distance = tracked.bot.entity.position.distanceTo(target.position);
+  if (distance > BOSS_MELEE_DISTANCE) {
     return false;
   }
 
@@ -421,14 +460,14 @@ async function main() {
       }
       if (await attackBossOnce(mate, boss.id, 'during mate contribution verification')) {
         mateHits++;
-        console.log(`${MATE_NAME} client-authored boss hit ${mateHits}/2.`);
+        console.log(`${MATE_NAME} close-range client-authored boss attack ${mateHits}/2.`);
         await sleep(700);
       } else {
         await sleep(200);
       }
     }
     if (mateHits < 2) {
-      throw new Error(`Mate did not land required client-authored contribution hits; hits=${mateHits}`);
+      throw new Error(`Mate could not make required close-range client-authored boss attacks; attacks=${mateHits}`);
     }
 
     diagnostic.phase = 'two-client-kill';
