@@ -11,7 +11,11 @@ const BOT_PORT = Number(process.env.E2E_BOT_PORT || '25568');
 const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
-const ATTACK_REACH = 3.6;
+const MELEE_DISTANCE = 2.75;
+const HURT_CONFIRM_TIMEOUT_MS = 1_800;
+const ARENA_RADIUS = 18.0;
+const ARENA_SAFE_RADIUS = 16.0;
+const ARENA_SAFE_VERTICAL = 6.0;
 const PARTY_CONVERGENCE_DISTANCE = 10.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
@@ -179,6 +183,119 @@ async function walkToward(tracked, targetPosition, stopDistance, timeoutMs) {
   }
 }
 
+function insideSafeArena(position, arenaCenter) {
+  return horizontalDistance(position, arenaCenter) <= ARENA_SAFE_RADIUS
+    && Math.abs(position.y - arenaCenter.y) <= ARENA_SAFE_VERTICAL;
+}
+
+async function walkIntoEntityMeleeRange(tracked, observer, entityId, arenaCenter, timeoutMs) {
+  const { bot } = tracked;
+  const deadline = Date.now() + timeoutMs;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let lastProgressAt = Date.now();
+  bot.setControlState('sprint', true);
+
+  try {
+    while (Date.now() < deadline) {
+      assertConnected(tracked, 'while approaching Stone Vault combat target');
+
+      if (!insideSafeArena(bot.entity.position, arenaCenter)) {
+        await bot.lookAt(arenaCenter.offset(0, 0.8, 0), true);
+        bot.setControlState('forward', true);
+        const climbingTowardCenter = arenaCenter.y - bot.entity.position.y > 0.8;
+        bot.setControlState('jump', bot.entity.onGround && climbingTowardCenter);
+        await sleep(125);
+        continue;
+      }
+
+      const target = bot.entities[entityId] || observer.bot.entities[entityId];
+      if (!target?.position) {
+        return false;
+      }
+
+      const distance = bot.entity.position.distanceTo(target.position);
+      if (distance <= MELEE_DISTANCE && bot.entities[entityId]) {
+        return true;
+      }
+      if (distance + 0.1 < bestDistance) {
+        bestDistance = distance;
+        lastProgressAt = Date.now();
+      }
+
+      await bot.lookAt(target.position.offset(0, 0.9, 0), true);
+      bot.setControlState('forward', true);
+      const climbingTowardTarget = target.position.y - bot.entity.position.y > 0.8;
+      const movementStalled = Date.now() - lastProgressAt > 650;
+      bot.setControlState('jump', bot.entity.onGround && (climbingTowardTarget || movementStalled));
+      await sleep(100);
+    }
+    return false;
+  } finally {
+    bot.setControlState('forward', false);
+    bot.setControlState('jump', false);
+    bot.setControlState('sprint', false);
+  }
+}
+
+async function attackEntityAndConfirmDamage(tracked, observer, entityId, arenaCenter, context) {
+  assertConnected(tracked, context);
+  const { bot } = tracked;
+  const inReach = await walkIntoEntityMeleeRange(tracked, observer, entityId, arenaCenter, 3_500);
+  const target = bot.entities[entityId];
+  if (!inReach || !target) {
+    return false;
+  }
+
+  if (!insideSafeArena(bot.entity.position, arenaCenter)) {
+    return false;
+  }
+  if (horizontalDistance(bot.entity.position, arenaCenter) > ARENA_RADIUS) {
+    throw new Error(`${tracked.username} left the Stone Vault runtime arena ${context}`);
+  }
+  if (bot.entity.position.distanceTo(target.position) > MELEE_DISTANCE) {
+    return false;
+  }
+
+  await bot.lookAt(target.position.offset(0, Math.min(1.0, target.height || 1.0), 0), true);
+  const attackerId = bot.entity.id;
+  const confirmedDamage = new Promise((resolve) => {
+    let settled = false;
+    let timeout = null;
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      bot.removeListener('entityHurt', onEntityHurt);
+      bot.removeListener('entityGone', onEntityGone);
+      resolve(value);
+    };
+    const onEntityHurt = (entity, source) => {
+      if (!entity || entity.id !== entityId) {
+        return;
+      }
+      if (source && source.id !== attackerId) {
+        return;
+      }
+      finish(true);
+    };
+    const onEntityGone = (entity) => {
+      if (entity?.id === entityId) {
+        finish(true);
+      }
+    };
+    bot.on('entityHurt', onEntityHurt);
+    bot.on('entityGone', onEntityGone);
+    timeout = setTimeout(() => finish(false), HURT_CONFIRM_TIMEOUT_MS);
+  });
+
+  bot.attack(target, true);
+  return confirmedDamage;
+}
+
 async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
   const { bot, username } = tracked;
   assertConnected(tracked, 'before pathfinding convergence');
@@ -274,11 +391,12 @@ async function waitForWave(tracked, seenIds, expectedCount, predicate, descripti
   return entities.map((entity) => entity.id);
 }
 
-async function killEntityIds(attackers, observer, entityIds, description) {
+async function killEntityIds(attackers, observer, entityIds, description, arenaCenter) {
   for (let index = 0; index < entityIds.length; index++) {
     const entityId = entityIds[index];
     const attacker = attackers[index % attackers.length];
     const deadline = Date.now() + 18_000;
+    let confirmedHits = 0;
     while (Date.now() < deadline) {
       for (const tracked of attackers) {
         assertConnected(tracked, `while clearing ${description}`);
@@ -287,23 +405,27 @@ async function killEntityIds(attackers, observer, entityIds, description) {
       if (!target) {
         break;
       }
-      const inReach = await walkToward(
+
+      const confirmed = await attackEntityAndConfirmDamage(
         attacker,
-        () => attacker.bot.entities[entityId]?.position || observer.bot.entities[entityId]?.position,
-        ATTACK_REACH,
-        2_500
+        observer,
+        entityId,
+        arenaCenter,
+        `while clearing ${description}`
       );
-      const current = attacker.bot.entities[entityId] || observer.bot.entities[entityId];
-      if (!inReach || !current) {
+      if (confirmed) {
+        confirmedHits++;
+        console.log(`${attacker.username} server-confirmed ${description} hit entity=${entityId} count=${confirmedHits}`);
+        await sleep(450);
+      } else {
         await sleep(150);
-        continue;
       }
-      await attacker.bot.lookAt(current.position.offset(0, 0.9, 0), true);
-      attacker.bot.attack(current, true);
-      await sleep(450);
     }
     if (observer.bot.entities[entityId] || attacker.bot.entities[entityId]) {
-      throw new Error(`Could not clear ${description} entity id=${entityId}`);
+      throw new Error(
+        `Could not clear ${description} entity id=${entityId}; confirmedHits=${confirmedHits}; `
+        + `attackerArenaDistance=${horizontalDistance(attacker.bot.entity.position, arenaCenter).toFixed(2)}`
+      );
     }
   }
 }
@@ -332,6 +454,7 @@ async function main() {
       mate.bot.entity.position
     ).toFixed(2)} blocks.`);
 
+    const arenaCenter = leader.bot.entity.position.clone();
     const seenIds = new Set(Object.keys(leader.bot.entities));
     for (const name of [LEADER_NAME, MATE_NAME]) {
       rcon(`effect give ${name} minecraft:resistance 180 4 true`);
@@ -354,7 +477,7 @@ async function main() {
       'four Outer Seal sentinels'
     );
     console.log(`Outer Seal observed: ${outerIds.join(',')}`);
-    await killEntityIds([leader, mate], leader, outerIds, 'Outer Seal');
+    await killEntityIds([leader, mate], leader, outerIds, 'Outer Seal', arenaCenter);
 
     await waitFor('Inner Guard durable/runtime transition', () => {
       const status = rcon('dungeon status');
@@ -369,7 +492,7 @@ async function main() {
       'four Inner Guard mobs'
     );
     console.log(`Inner Guard observed: ${innerIds.join(',')}`);
-    await killEntityIds([mate, leader], leader, innerIds, 'Inner Guard');
+    await killEntityIds([mate, leader], leader, innerIds, 'Inner Guard', arenaCenter);
 
     const boss = await waitFor('Stone Warden after Stone Vault waves', () => {
       return nearbyNewEntities(leader, seenIds, isIronGolem).at(0) || null;
@@ -384,6 +507,7 @@ async function main() {
 
     const killDeadline = Date.now() + 35_000;
     let attackIndex = 0;
+    let confirmedBossHits = 0;
     while (Date.now() < killDeadline) {
       for (const tracked of [leader, mate]) {
         assertConnected(tracked, 'during Stone Vault boss combat');
@@ -399,33 +523,31 @@ async function main() {
         await waitFor('Stone Vault local runtime cleanup', () => {
           return rcon('dungeon status').includes('No active Stone Vault activity.');
         }, 10_000, 250);
-        console.log('Stone Vault completed with shard visible to both real clients.');
+        console.log(`Stone Vault completed with shard visible to both real clients; confirmedBossHits=${confirmedBossHits}.`);
         return;
       }
 
       const attacker = [leader, mate][attackIndex++ % 2];
-      const target = attacker.bot.entities[boss.id] || leader.bot.entities[boss.id];
-      if (!target) {
-        await sleep(200);
-        continue;
-      }
-      const inReach = await walkToward(
+      const confirmed = await attackEntityAndConfirmDamage(
         attacker,
-        () => attacker.bot.entities[boss.id]?.position || leader.bot.entities[boss.id]?.position,
-        ATTACK_REACH,
-        2_500
+        leader,
+        boss.id,
+        arenaCenter,
+        'during Stone Vault boss combat'
       );
-      const current = attacker.bot.entities[boss.id] || leader.bot.entities[boss.id];
-      if (!inReach || !current) {
+      if (confirmed) {
+        confirmedBossHits++;
+        console.log(`${attacker.username} server-confirmed Stone Warden hit count=${confirmedBossHits}`);
+        await sleep(500);
+      } else {
         await sleep(150);
-        continue;
       }
-      await attacker.bot.lookAt(current.position.offset(0, 1.0, 0), true);
-      attacker.bot.attack(current, true);
-      await sleep(500);
     }
 
-    throw new Error(`Stone Vault boss did not complete; boss=${rcon('boss status')} dungeon=${rcon('dungeon status')}`);
+    throw new Error(
+      `Stone Vault boss did not complete; confirmedBossHits=${confirmedBossHits} `
+      + `boss=${rcon('boss status')} dungeon=${rcon('dungeon status')}`
+    );
   } finally {
     for (const tracked of [leader, mate].filter(Boolean)) {
       try {
