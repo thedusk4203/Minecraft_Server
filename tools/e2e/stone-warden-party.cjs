@@ -13,6 +13,7 @@ const BOT_VERSION = process.env.E2E_BOT_VERSION || '26.1';
 const COMPOSE_FILE = process.env.E2E_COMPOSE_FILE || 'compose.e2e.yaml';
 const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const BOSS_MELEE_DISTANCE = 2.75;
+const BOSS_HURT_CONFIRM_TIMEOUT_MS = 1_800;
 const PARTY_CONVERGENCE_DISTANCE = 9.0;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
@@ -353,22 +354,51 @@ async function keepNearStart(tracked, start) {
   }
 }
 
-async function attackBossOnce(tracked, bossId, context) {
+async function attackBossAndConfirmDamage(tracked, bossId, context) {
   assertConnected(tracked, context);
+  const { bot } = tracked;
   const inReach = await walkIntoBossMeleeRange(tracked, bossId, 3_500);
-  const target = tracked.bot.entities[bossId];
+  const target = bot.entities[bossId];
   if (!inReach || !target) {
     return false;
   }
 
-  const distance = tracked.bot.entity.position.distanceTo(target.position);
+  const distance = bot.entity.position.distanceTo(target.position);
   if (distance > BOSS_MELEE_DISTANCE) {
     return false;
   }
 
-  await tracked.bot.lookAt(target.position.offset(0, 1.0, 0), true);
-  tracked.bot.attack(target, true);
-  return true;
+  await bot.lookAt(target.position.offset(0, 1.0, 0), true);
+  const attackerId = bot.entity.id;
+  const confirmedDamage = new Promise((resolve) => {
+    let settled = false;
+    let timeout = null;
+    const finish = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      bot.removeListener('entityHurt', onEntityHurt);
+      resolve(value);
+    };
+    const onEntityHurt = (entity, source) => {
+      if (!entity || entity.id !== bossId) {
+        return;
+      }
+      if (source && source.id !== attackerId) {
+        return;
+      }
+      finish(true);
+    };
+    bot.on('entityHurt', onEntityHurt);
+    timeout = setTimeout(() => finish(false), BOSS_HURT_CONFIRM_TIMEOUT_MS);
+  });
+
+  bot.attack(target, true);
+  return confirmedDamage;
 }
 
 async function main() {
@@ -458,16 +488,16 @@ async function main() {
       if (safeRcon('boss status').includes('No active Stone Warden encounter.')) {
         break;
       }
-      if (await attackBossOnce(mate, boss.id, 'during mate contribution verification')) {
+      if (await attackBossAndConfirmDamage(mate, boss.id, 'during mate contribution verification')) {
         mateHits++;
-        console.log(`${MATE_NAME} close-range client-authored boss attack ${mateHits}/2.`);
+        console.log(`${MATE_NAME} server-confirmed boss hit ${mateHits}/2.`);
         await sleep(700);
       } else {
         await sleep(200);
       }
     }
     if (mateHits < 2) {
-      throw new Error(`Mate could not make required close-range client-authored boss attacks; attacks=${mateHits}`);
+      throw new Error(`Mate could not make required server-confirmed boss hits; confirmedHits=${mateHits}`);
     }
 
     diagnostic.phase = 'two-client-kill';
@@ -494,15 +524,17 @@ async function main() {
         return;
       }
 
-      const mateAttacked = await attackBossOnce(mate, boss.id, 'during mate party kill verification');
-      if (mateAttacked) {
+      const mateHit = await attackBossAndConfirmDamage(mate, boss.id, 'during mate party kill verification');
+      if (mateHit) {
+        console.log(`${MATE_NAME} server-confirmed boss hit during party kill.`);
         await sleep(550);
       }
 
-      const leaderAttacked = await attackBossOnce(leader, boss.id, 'during leader party kill verification');
-      if (leaderAttacked) {
+      const leaderHit = await attackBossAndConfirmDamage(leader, boss.id, 'during leader party kill verification');
+      if (leaderHit) {
+        console.log(`${LEADER_NAME} server-confirmed boss hit during party kill.`);
         await sleep(550);
-      } else if (!mateAttacked) {
+      } else if (!mateHit) {
         await sleep(200);
       }
     }
