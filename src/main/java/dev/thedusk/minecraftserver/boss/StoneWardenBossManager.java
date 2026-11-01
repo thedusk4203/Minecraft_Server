@@ -244,16 +244,22 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         for (ParticipantSeed seed : seeds) {
             Player player = Bukkit.getPlayer(seed.minecraftUuid());
             if (player == null || !player.isOnline() || player.isDead()) {
-                reservations.release(participantUuids);
-                failPersistedStart(result.run().runId(), "START_PARTICIPANT_UNAVAILABLE");
+                failPersistedStart(
+                        result.run().runId(),
+                        "START_PARTICIPANT_UNAVAILABLE",
+                        participantUuids
+                );
                 if (leader != null) {
                     leader.sendMessage("§cEncounter bị hủy vì một thành viên không còn sẵn sàng.");
                 }
                 return;
             }
             if (playerToRun.containsKey(player.getUniqueId())) {
-                reservations.release(participantUuids);
-                failPersistedStart(result.run().runId(), "START_PARTICIPANT_CONFLICT");
+                failPersistedStart(
+                        result.run().runId(),
+                        "START_PARTICIPANT_CONFLICT",
+                        participantUuids
+                );
                 return;
             }
             onlineParticipants.add(player);
@@ -261,8 +267,11 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
 
         World world = onlineParticipants.getFirst().getWorld();
         if (onlineParticipants.stream().anyMatch(player -> player.getWorld() != world)) {
-            reservations.release(participantUuids);
-            failPersistedStart(result.run().runId(), "START_PARTICIPANT_WORLD_MISMATCH");
+            failPersistedStart(
+                    result.run().runId(),
+                    "START_PARTICIPANT_WORLD_MISMATCH",
+                    participantUuids
+            );
             return;
         }
 
@@ -276,8 +285,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 null
         );
         if (!spawned) {
-            reservations.release(participantUuids);
-            failPersistedStart(result.run().runId(), "BOSS_SPAWN_FAILED");
+            failPersistedStart(result.run().runId(), "BOSS_SPAWN_FAILED", participantUuids);
         }
     }
 
@@ -615,6 +623,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                         );
                         return;
                     }
+                    reservations.release(session.participants());
                     logger.info("BOSS_TELEMETRY event=" + (completed ? "completed" : "failed")
                             + " run=" + session.runId()
                             + " durationTicks=" + durationTicks
@@ -631,13 +640,15 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
                 });
     }
 
-    private void failPersistedStart(UUID runId, String reason) {
+    private void failPersistedStart(UUID runId, String reason, List<UUID> participantUuids) {
         UUID correlationId = UUID.randomUUID();
         persistenceExecutor.submit(() -> encounterRuns.fail(runId, correlationId, reason))
                 .whenComplete((result, failure) -> {
                     if (failure != null) {
                         logger.log(Level.SEVERE, "Failed to mark unspawned encounter failed: " + runId, failure);
+                        return;
                     }
+                    reservations.release(participantUuids);
                 });
     }
 
@@ -645,7 +656,6 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         sessions.remove(session.runId());
         bossEntityToRun.remove(session.bossEntityId());
         session.participants().forEach(uuid -> playerToRun.remove(uuid, session.runId()));
-        reservations.release(session.participants());
         if (session.task != null) {
             session.task.cancel();
         }
@@ -834,6 +844,7 @@ public final class StoneWardenBossManager implements Listener, AutoCloseable {
         for (Session session : List.copyOf(sessions.values())) {
             session.terminalRequested = true;
             cleanupLocal(session, false);
+            reservations.release(session.participants());
         }
     }
 
