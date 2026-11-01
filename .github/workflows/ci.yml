@@ -1,0 +1,280 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FORWARDING_SECRET: ci-forwarding-secret-ephemeral-only
+      POSTGRES_PASSWORD: ci-postgres-password-ephemeral-only
+      RCON_PASSWORD: ci-rcon-password-ephemeral-only
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle 9.8.2
+        uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          gradle-version: '9.8.2'
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build core plugin and unit tests
+        run: gradle clean build --no-daemon
+
+      - name: Verify shaded runtime resources
+        run: |
+          plugin_jar="$(find build/libs -maxdepth 1 -type f -name 'minecraft-server-core-*.jar' -print -quit)"
+          test -n "$plugin_jar"
+          echo "Checking runtime resources in $plugin_jar"
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V1__core_platform.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V6__encounter_runtime.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V7__encounter_rewards.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V8__encounter_reward_items.sql'
+          jar tf "$plugin_jar" | grep -qx 'db/migration/V9__structured_activity_progress.sql'
+          jar tf "$plugin_jar" | grep -qx 'encounters/index.txt'
+          jar tf "$plugin_jar" | grep -qx 'encounters/framework_probe.properties'
+          jar tf "$plugin_jar" | grep -qx 'encounters/stone_warden.properties'
+          jar tf "$plugin_jar" | grep -qx 'activities/index.txt'
+          jar tf "$plugin_jar" | grep -qx 'activities/stone_vault.properties'
+
+      - name: Run PostgreSQL integration tests
+        run: gradle integrationTest --no-daemon
+
+      - name: Prepare pinned crossplay plugins
+        run: bash scripts/fetch-crossplay-plugins.sh
+
+      - name: Start local stack
+        run: docker compose up -d --wait --wait-timeout 300
+
+      - name: Check PostgreSQL
+        run: docker compose exec -T postgres pg_isready -U minecraft -d minecraft
+
+      - name: Check Paper core plugin and database
+        run: |
+          health="$(docker compose exec -T paper rcon-cli 'mcserver health')"
+          echo "$health"
+          echo "$health" | grep -q 'db=UP'
+
+      - name: Check encounter and reward runtime foundation
+        run: |
+          encounter_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_run') IS NOT NULL")"
+          reward_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_reward') IS NOT NULL")"
+          reward_item_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.encounter_reward_item') IS NOT NULL")"
+          activity_table="$(docker compose exec -T postgres psql -U minecraft -d minecraft -tAc "SELECT to_regclass('public.structured_activity_run') IS NOT NULL")"
+          echo "encounter_run table exists: $encounter_table"
+          echo "encounter_reward table exists: $reward_table"
+          echo "encounter_reward_item table exists: $reward_item_table"
+          echo "structured_activity_run table exists: $activity_table"
+          echo "$encounter_table" | grep -qx 't'
+          echo "$reward_table" | grep -qx 't'
+          echo "$reward_item_table" | grep -qx 't'
+          echo "$activity_table" | grep -qx 't'
+          docker compose logs paper | grep -q 'validated encounter definition(s)'
+          docker compose logs paper | grep -q 'validated structured activity definition(s)'
+
+      - name: Check Stone Warden runtime wiring
+        run: |
+          boss="$(docker compose exec -T paper rcon-cli 'boss status')"
+          echo "$boss"
+          echo "$boss" | grep -q 'No active Stone Warden encounter.'
+          recover="$(docker compose exec -T paper rcon-cli 'boss recover')"
+          echo "$recover"
+          echo "$recover" | grep -q 'requires an online player'
+          docker compose logs paper | grep -q 'Stone Warden combat runtime=READY'
+          docker compose logs paper | grep -q 'reconciledBossRewardRuns='
+          docker compose logs paper | grep -q 'reconciledBossItemIntents='
+
+      - name: Check Stone Vault runtime wiring
+        run: |
+          dungeon="$(docker compose exec -T paper rcon-cli 'dungeon status')"
+          echo "$dungeon"
+          echo "$dungeon" | grep -q 'No active Stone Vault activity.'
+          docker compose logs paper | grep -q 'Stone Vault runtime=READY'
+
+      - name: Check gameplay dependencies
+        run: |
+          plugins="$(docker compose exec -T paper rcon-cli 'plugins')"
+          echo "$plugins"
+          echo "$plugins" | grep -qi 'GriefPrevention'
+          echo "$plugins" | grep -qi 'AuraSkills'
+
+      - name: Check market command wiring
+        run: |
+          market="$(docker compose exec -T paper rcon-cli 'market list')"
+          echo "$market"
+          echo "$market" | grep -qi 'requires an online player'
+
+      - name: Check crossplay proxy plugins
+        run: |
+          test -f build/crossplay-plugins/Geyser-Velocity.jar
+          test -s build/crossplay-plugins/Geyser-Velocity.jar
+          test -f build/crossplay-plugins/floodgate-velocity.jar
+          test -s build/crossplay-plugins/floodgate-velocity.jar
+          docker compose exec -T velocity sh -ec '
+            test -f plugins/Geyser-Velocity.jar
+            test -f plugins/floodgate-velocity.jar
+            test -f plugins/Geyser-Velocity/config.yml
+            test -f plugins/floodgate/config.yml
+          '
+
+      - name: Show stack status
+        if: always()
+        run: docker compose ps
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail=300
+
+      - name: Stop local stack
+        if: always()
+        run: docker compose down -v
+
+      - name: Set up Node 24 for real-client E2E
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install pinned E2E client dependency
+        run: npm install --prefix tools/e2e --ignore-scripts --no-audit --no-fund
+
+      - name: Validate E2E Compose configuration
+        run: docker compose -f compose.e2e.yaml config --quiet
+
+      - name: Start isolated Paper E2E stack
+        run: docker compose -f compose.e2e.yaml up -d --wait --wait-timeout 300
+
+      - name: Start pinned ViaProxy 26.3 translation bridge
+        run: bash tools/e2e/start-viaproxy.sh
+
+      - name: Run Stone Warden real-client combat E2E
+        run: node tools/e2e/stone-warden.cjs
+
+      - name: Verify Stone Warden durable completion, mechanics and solo rewards
+        run: |
+          status=""
+          for _ in $(seq 1 40); do
+            status="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT status FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1")"
+            if [[ "$status" == "COMPLETED" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable Stone Warden status: $status"
+          test "$status" = "COMPLETED"
+
+          reward_count="0"
+          for _ in $(seq 1 50); do
+            reward_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward r JOIN economy_transaction t ON t.transaction_id = r.currency_transaction_id JOIN economy_account a ON a.account_id = t.account_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND r.status = 'CURRENCY_GRANTED' AND r.currency_code = 'COINS' AND r.currency_amount = 250 AND t.delta = 250 AND t.reason = 'STONE_WARDEN_REWARD' AND a.player_id = r.player_id")"
+            if [[ "$reward_count" == "1" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable solo currency reward rows: $reward_count"
+          test "$reward_count" = "1"
+
+          item_count="0"
+          for _ in $(seq 1 50); do
+            item_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward_item i JOIN encounter_reward r ON r.reward_id = i.reward_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND i.status = 'DELIVERED' AND i.item_key = 'stone_warden_shard' AND i.item_version = 1 AND i.item_material = 'AMETHYST_SHARD' AND i.item_amount = 1 AND i.delivery_token = i.reward_id AND i.item_payload IS NOT NULL AND i.item_sha256 ~ '^[0-9a-f]{64}$'")"
+            if [[ "$item_count" == "1" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable solo item reward rows: $item_count"
+          test "$item_count" = "1"
+
+          logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=started'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=slam_telegraph'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=charge_telegraph'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
+          echo "$logs" | grep -q 'BOSS_REWARD_TELEMETRY event=item_delivered'
+
+      - name: Run Stone Warden two-client party E2E
+        run: node tools/e2e/stone-warden-party.cjs
+
+      - name: Verify Stone Warden party binding, completion and rewards
+        run: |
+          status=""
+          for _ in $(seq 1 40); do
+            status="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT status FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1")"
+            if [[ "$status" == "COMPLETED" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable party Stone Warden status: $status"
+          test "$status" = "COMPLETED"
+
+          participants="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_participant WHERE run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1)")"
+          echo "durable party participant count: $participants"
+          test "$participants" = "2"
+
+          reward_count="0"
+          for _ in $(seq 1 50); do
+            reward_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward r JOIN economy_transaction t ON t.transaction_id = r.currency_transaction_id JOIN economy_account a ON a.account_id = t.account_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND r.status = 'CURRENCY_GRANTED' AND r.currency_code = 'COINS' AND r.currency_amount = 250 AND t.delta = 250 AND t.reason = 'STONE_WARDEN_REWARD' AND a.player_id = r.player_id")"
+            if [[ "$reward_count" == "2" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable party currency reward rows: $reward_count"
+          test "$reward_count" = "2"
+
+          item_count="0"
+          for _ in $(seq 1 50); do
+            item_count="$(docker compose -f compose.e2e.yaml exec -T postgres-e2e psql -U minecraft -d minecraft -tAc "SELECT count(*) FROM encounter_reward_item i JOIN encounter_reward r ON r.reward_id = i.reward_id WHERE r.run_id = (SELECT run_id FROM encounter_run WHERE encounter_id = 'stone_warden' ORDER BY started_at DESC LIMIT 1) AND i.status = 'DELIVERED' AND i.item_key = 'stone_warden_shard' AND i.item_version = 1 AND i.item_material = 'AMETHYST_SHARD' AND i.item_amount = 1 AND i.delivery_token = i.reward_id AND i.item_payload IS NOT NULL AND i.item_sha256 ~ '^[0-9a-f]{64}$'")"
+            if [[ "$item_count" == "2" ]]; then
+              break
+            fi
+            sleep 0.5
+          done
+          echo "durable party item reward rows: $item_count"
+          test "$item_count" = "2"
+
+          logs="$(docker compose -f compose.e2e.yaml logs paper-e2e)"
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=started .* participants=2'
+          echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
+
+      - name: Show E2E logs on failure
+        if: failure()
+        run: |
+          docker compose -f compose.e2e.yaml logs --tail=500 || true
+          work_dir="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
+          if [[ -f "$work_dir/viaproxy.log" ]]; then
+            echo '--- ViaProxy log ---'
+            tail -400 "$work_dir/viaproxy.log"
+          fi
+
+      - name: Stop E2E stack and ViaProxy
+        if: always()
+        run: |
+          work_dir="${RUNNER_TEMP:-/tmp}/minecraft-server-viaproxy"
+          if [[ -f "$work_dir/viaproxy.pid" ]]; then
+            kill "$(cat "$work_dir/viaproxy.pid")" 2>/dev/null || true
+          fi
+          docker compose -f compose.e2e.yaml down -v || true

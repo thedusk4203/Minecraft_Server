@@ -1,5 +1,39 @@
 # Minecraft Server
 
-AI-native Minecraft server project.
+AI-native Vietnamese-first Minecraft Survival SMP project.
 
-This repository is being initialized. Product and technical foundations will be developed through pull requests before implementation begins.
+## Product direction
+
+The first release is a Java + Bedrock crossplay Survival SMP with economy, lightweight RPG progression, quests, PvE encounters, cosmetics and recurring live content. The MVP deliberately avoids splitting the community across multiple game modes.
+
+## Documentation
+
+- [`docs/PRODUCT.md`](docs/PRODUCT.md) — product thesis, audience, MVP scope, monetization and success metrics.
+- [`docs/GAME_DESIGN.md`](docs/GAME_DESIGN.md) — core loop, progression, economy and PvE design principles.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — technical architecture, persistence, reliability, observability and AI boundaries.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — phased delivery plan and exit gates.
+- [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) — reproducible local stack and smoke-test workflow.
+- [`AGENTS.md`](AGENTS.md) — operating rules for coding and automation agents.
+
+## Current status
+
+**Phase 1 — Local technical skeleton in progress.**
+
+The development branch contains a Paper 26.3 / Java 25 core plugin, Velocity proxy, Geyser + Floodgate crossplay layer, PostgreSQL, Docker Compose workflow, local health checks and GitHub Actions CI.
+
+### Start locally on Windows
+
+```powershell
+.\scripts\dev-up.ps1
+.\scripts\dev-check.ps1
+```
+
+Java connects to `localhost:25565`; Bedrock connects to `localhost:19132`.
+
+## Principles
+
+1. Retention before feature count.
+2. Player density before additional game modes.
+3. Fair monetization before short-term revenue extraction.
+4. Data durability and observability before scale.
+5. AI agents implement and automate; consequential product and production decisions remain explicitly controlled.
