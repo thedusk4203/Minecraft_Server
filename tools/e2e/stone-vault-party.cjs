@@ -17,6 +17,8 @@ const ARENA_RADIUS = 18.0;
 const ARENA_SAFE_RADIUS = 16.0;
 const ARENA_SAFE_VERTICAL = 6.0;
 const PARTY_CONVERGENCE_DISTANCE = 10.0;
+const PARTY_CONVERGENCE_VERTICAL_DELTA = 2.0;
+const PARTY_PATHFIND_GOAL_RADIUS = 2;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 const vaultDiagnostics = {
@@ -110,9 +112,13 @@ function trackedSnapshot(tracked, arenaCenter) {
 
 function writeFailureDiagnostics(error, leader, mate, arenaCenter) {
   let partyDistanceValue = null;
+  let partyVerticalDeltaValue = null;
   if (leader?.bot.entity?.position && mate?.bot.entity?.position) {
     partyDistanceValue = Number(
       partyDistance(leader.bot.entity.position, mate.bot.entity.position).toFixed(2)
+    );
+    partyVerticalDeltaValue = Number(
+      Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y).toFixed(2)
     );
   }
 
@@ -122,6 +128,7 @@ function writeFailureDiagnostics(error, leader, mate, arenaCenter) {
     error: error?.message || String(error),
     arenaCenter: positionSnapshot(arenaCenter),
     partyDistance: partyDistanceValue,
+    partyVerticalDelta: partyVerticalDeltaValue,
     currentTargetId: vaultDiagnostics.currentTargetId,
     currentAttacker: vaultDiagnostics.currentAttacker,
     lastAttackContext: vaultDiagnostics.lastAttackContext,
@@ -180,6 +187,11 @@ function horizontalDistance(first, second) {
 
 function partyDistance(first, second) {
   return first.distanceTo(second);
+}
+
+function partyCombatReady(first, second) {
+  return partyDistance(first, second) <= PARTY_CONVERGENCE_DISTANCE
+    && Math.abs(first.y - second.y) <= PARTY_CONVERGENCE_VERTICAL_DELTA;
 }
 
 function normalizedEntityName(entity) {
@@ -451,7 +463,7 @@ async function attackEntityAndConfirmDamage(tracked, observer, entityId, arenaCe
   return confirmed;
 }
 
-async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
+async function pathfindToward(tracked, targetTracked, timeoutMs) {
   const { bot, username } = tracked;
   assertConnected(tracked, 'before pathfinding convergence');
   assertConnected(targetTracked, 'before pathfinding convergence target');
@@ -462,12 +474,11 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
   movements.allow1by1towers = false;
   bot.pathfinder.setMovements(movements);
 
-  const goalRadius = Math.max(2, Math.floor(stopDistance - 1));
   const goal = new GoalNear(
     Math.floor(target.x),
     Math.floor(target.y),
     Math.floor(target.z),
-    goalRadius
+    PARTY_PATHFIND_GOAL_RADIUS
   );
 
   try {
@@ -485,14 +496,14 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
 
   assertConnected(tracked, 'after pathfinding convergence');
   assertConnected(targetTracked, 'after pathfinding convergence target');
-  return partyDistance(bot.entity.position, targetTracked.bot.entity.position) <= stopDistance;
+  return partyCombatReady(bot.entity.position, targetTracked.bot.entity.position);
 }
 
 async function convergePartyClients(leader, mate) {
   assertConnected(leader, 'before Stone Vault convergence');
   assertConnected(mate, 'before Stone Vault convergence');
 
-  if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+  if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
     return true;
   }
 
@@ -503,26 +514,28 @@ async function convergePartyClients(leader, mate) {
 
   for (const [mover, target] of attempts) {
     const before = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+    const verticalDelta = Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y);
     console.log(
-      `Stone Vault convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
+      `Stone Vault convergence mover=${mover.username} target=${target.username} `
+      + `distance=${before.toFixed(2)} verticalDelta=${verticalDelta.toFixed(2)}`
     );
 
-    if (await pathfindToward(mover, target, PARTY_CONVERGENCE_DISTANCE, 20_000)) {
+    if (await pathfindToward(mover, target, 20_000)) {
       return true;
     }
 
     await walkToward(
       mover,
       () => target.bot.entity?.position,
-      PARTY_CONVERGENCE_DISTANCE,
+      PARTY_PATHFIND_GOAL_RADIUS,
       7_500
     );
-    if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+    if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
       return true;
     }
   }
 
-  return partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
+  return partyCombatReady(leader.bot.entity.position, mate.bot.entity.position);
 }
 
 function nearbyNewEntities(tracked, seenIds, predicate, radius = 36) {
@@ -604,18 +617,21 @@ async function main() {
 
     vaultDiagnostics.phase = 'party-convergence';
     const converged = await convergePartyClients(leader, mate);
+    const convergenceDistance = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+    const convergenceVerticalDelta = Math.abs(
+      leader.bot.entity.position.y - mate.bot.entity.position.y
+    );
     if (!converged) {
       throw new Error(
-        `Stone Vault party could not converge within start boundary; distance=${partyDistance(
-          leader.bot.entity.position,
-          mate.bot.entity.position
-        ).toFixed(2)}`
+        `Stone Vault party could not converge to combat-ready start; `
+        + `distance=${convergenceDistance.toFixed(2)} `
+        + `verticalDelta=${convergenceVerticalDelta.toFixed(2)}`
       );
     }
-    console.log(`Stone Vault party converged; distance=${partyDistance(
-      leader.bot.entity.position,
-      mate.bot.entity.position
-    ).toFixed(2)} blocks.`);
+    console.log(
+      `Stone Vault party converged; distance=${convergenceDistance.toFixed(2)} `
+      + `verticalDelta=${convergenceVerticalDelta.toFixed(2)} blocks.`
+    );
 
     arenaCenter = leader.bot.entity.position.clone();
     const seenIds = new Set(Object.keys(leader.bot.entities));
