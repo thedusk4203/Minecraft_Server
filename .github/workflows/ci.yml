@@ -261,7 +261,19 @@ jobs:
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
 
       - name: Run Stone Vault two-client real-client E2E
-        run: node tools/e2e/stone-vault-party.cjs
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-party.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-party.log"
+
+      - name: Upload Stone Vault E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-party-e2e-log
+          path: ${{ runner.temp }}/stone-vault-party.log
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Verify Stone Vault same-run progression and frozen rewards
         run: |
