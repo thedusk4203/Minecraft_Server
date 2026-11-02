@@ -563,13 +563,16 @@ async function killEntityIds(attackers, observer, entityIds, description, arenaC
   vaultDiagnostics.wave = description;
   for (let index = 0; index < entityIds.length; index++) {
     const entityId = entityIds[index];
-    const attacker = attackers[index % attackers.length];
     const deadline = Date.now() + 18_000;
     let confirmedHits = 0;
+    let attackAttempt = 0;
+    let lastAttacker = attackers[index % attackers.length];
     while (Date.now() < deadline) {
       for (const tracked of attackers) {
         assertConnected(tracked, `while clearing ${description}`);
       }
+      const attacker = attackers[(index + attackAttempt++) % attackers.length];
+      lastAttacker = attacker;
       const target = observer.bot.entities[entityId] || attacker.bot.entities[entityId];
       if (!target) {
         break;
@@ -589,13 +592,20 @@ async function killEntityIds(attackers, observer, entityIds, description, arenaC
         console.log(`${attacker.username} server-confirmed ${description} hit entity=${entityId} count=${confirmedHits}`);
         await sleep(450);
       } else {
+        console.log(
+          `${attacker.username} could not confirm ${description} hit entity=${entityId}; `
+          + `reason=${vaultDiagnostics.lastAttackFailureReason || 'unknown'}; rotating attacker`
+        );
         await sleep(150);
       }
     }
-    if (observer.bot.entities[entityId] || attacker.bot.entities[entityId]) {
+    const stillVisible = attackers.some((tracked) => tracked.bot.entities[entityId])
+      || Boolean(observer.bot.entities[entityId]);
+    if (stillVisible) {
       throw new Error(
         `Could not clear ${description} entity id=${entityId}; confirmedHits=${confirmedHits}; `
-        + `attackerArenaDistance=${horizontalDistance(attacker.bot.entity.position, arenaCenter).toFixed(2)}`
+        + `lastAttacker=${lastAttacker.username}; `
+        + `attackerArenaDistance=${horizontalDistance(lastAttacker.bot.entity.position, arenaCenter).toFixed(2)}`
       );
     }
   }
