@@ -26,6 +26,12 @@ const vaultDiagnostics = {
   currentAttacker: null,
   lastAttackContext: null,
   lastAttackConfirmed: null,
+  lastAttackFailureReason: null,
+  targetSeenByAttacker: null,
+  targetSeenByObserver: null,
+  lastTargetPosition: null,
+  lastAttackerToTargetDistance3d: null,
+  lastMeleeApproachResult: null,
   confirmedHitsByPlayer: {
     [LEADER_NAME]: 0,
     [MATE_NAME]: 0
@@ -120,6 +126,12 @@ function writeFailureDiagnostics(error, leader, mate, arenaCenter) {
     currentAttacker: vaultDiagnostics.currentAttacker,
     lastAttackContext: vaultDiagnostics.lastAttackContext,
     lastAttackConfirmed: vaultDiagnostics.lastAttackConfirmed,
+    lastAttackFailureReason: vaultDiagnostics.lastAttackFailureReason,
+    targetSeenByAttacker: vaultDiagnostics.targetSeenByAttacker,
+    targetSeenByObserver: vaultDiagnostics.targetSeenByObserver,
+    lastTargetPosition: vaultDiagnostics.lastTargetPosition,
+    lastAttackerToTargetDistance3d: vaultDiagnostics.lastAttackerToTargetDistance3d,
+    lastMeleeApproachResult: vaultDiagnostics.lastMeleeApproachResult,
     confirmedHitsByPlayer: vaultDiagnostics.confirmedHitsByPlayer,
     confirmedBossHits: vaultDiagnostics.confirmedBossHits,
     leader: trackedSnapshot(leader, arenaCenter),
@@ -307,13 +319,22 @@ async function walkIntoEntityMeleeRange(tracked, observer, entityId, arenaCenter
         continue;
       }
 
-      const target = bot.entities[entityId] || observer.bot.entities[entityId];
+      const attackerTarget = bot.entities[entityId];
+      const observerTarget = observer.bot.entities[entityId];
+      vaultDiagnostics.targetSeenByAttacker = Boolean(attackerTarget?.position);
+      vaultDiagnostics.targetSeenByObserver = Boolean(observerTarget?.position);
+      const target = attackerTarget || observerTarget;
       if (!target?.position) {
+        vaultDiagnostics.lastAttackFailureReason = 'target-not-visible';
+        vaultDiagnostics.lastMeleeApproachResult = false;
         return false;
       }
 
       const distance = bot.entity.position.distanceTo(target.position);
-      if (distance <= MELEE_DISTANCE && bot.entities[entityId]) {
+      vaultDiagnostics.lastTargetPosition = positionSnapshot(target.position);
+      vaultDiagnostics.lastAttackerToTargetDistance3d = Number(distance.toFixed(2));
+      if (distance <= MELEE_DISTANCE && attackerTarget) {
+        vaultDiagnostics.lastMeleeApproachResult = true;
         return true;
       }
       if (distance + 0.1 < bestDistance) {
@@ -328,6 +349,10 @@ async function walkIntoEntityMeleeRange(tracked, observer, entityId, arenaCenter
       bot.setControlState('jump', bot.entity.onGround && (climbingTowardTarget || movementStalled));
       await sleep(100);
     }
+    vaultDiagnostics.lastMeleeApproachResult = false;
+    vaultDiagnostics.lastAttackFailureReason = vaultDiagnostics.targetSeenByAttacker
+      ? 'melee-approach-timeout'
+      : 'target-not-visible-to-attacker';
     return false;
   } finally {
     bot.setControlState('forward', false);
@@ -343,23 +368,42 @@ async function attackEntityAndConfirmDamage(tracked, observer, entityId, arenaCe
   vaultDiagnostics.currentAttacker = tracked.username;
   vaultDiagnostics.lastAttackContext = context;
   vaultDiagnostics.lastAttackConfirmed = null;
+  vaultDiagnostics.lastAttackFailureReason = null;
+  vaultDiagnostics.targetSeenByAttacker = Boolean(bot.entities[entityId]?.position);
+  vaultDiagnostics.targetSeenByObserver = Boolean(observer.bot.entities[entityId]?.position);
+  vaultDiagnostics.lastTargetPosition = null;
+  vaultDiagnostics.lastAttackerToTargetDistance3d = null;
+  vaultDiagnostics.lastMeleeApproachResult = null;
 
   const inReach = await walkIntoEntityMeleeRange(tracked, observer, entityId, arenaCenter, 3_500);
   const target = bot.entities[entityId];
-  if (!inReach || !target) {
+  if (!inReach) {
     vaultDiagnostics.lastAttackConfirmed = false;
+    if (!vaultDiagnostics.lastAttackFailureReason) {
+      vaultDiagnostics.lastAttackFailureReason = 'melee-approach-failed';
+    }
+    return false;
+  }
+  if (!target) {
+    vaultDiagnostics.lastAttackConfirmed = false;
+    vaultDiagnostics.lastAttackFailureReason = 'target-not-visible-to-attacker';
     return false;
   }
 
   if (!insideSafeArena(bot.entity.position, arenaCenter)) {
     vaultDiagnostics.lastAttackConfirmed = false;
+    vaultDiagnostics.lastAttackFailureReason = 'attacker-outside-safe-arena';
     return false;
   }
   if (horizontalDistance(bot.entity.position, arenaCenter) > ARENA_RADIUS) {
     throw new Error(`${tracked.username} left the Stone Vault runtime arena ${context}`);
   }
-  if (bot.entity.position.distanceTo(target.position) > MELEE_DISTANCE) {
+  const attackDistance = bot.entity.position.distanceTo(target.position);
+  vaultDiagnostics.lastTargetPosition = positionSnapshot(target.position);
+  vaultDiagnostics.lastAttackerToTargetDistance3d = Number(attackDistance.toFixed(2));
+  if (attackDistance > MELEE_DISTANCE) {
     vaultDiagnostics.lastAttackConfirmed = false;
+    vaultDiagnostics.lastAttackFailureReason = 'target-out-of-melee-range';
     return false;
   }
 
@@ -399,9 +443,11 @@ async function attackEntityAndConfirmDamage(tracked, observer, entityId, arenaCe
     timeout = setTimeout(() => finish(false), HURT_CONFIRM_TIMEOUT_MS);
   });
 
+  vaultDiagnostics.lastAttackFailureReason = 'damage-not-confirmed';
   bot.attack(target, true);
   const confirmed = await confirmedDamage;
   vaultDiagnostics.lastAttackConfirmed = confirmed;
+  vaultDiagnostics.lastAttackFailureReason = confirmed ? null : 'damage-not-confirmed';
   return confirmed;
 }
 
