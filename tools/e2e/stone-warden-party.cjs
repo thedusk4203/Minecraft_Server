@@ -15,6 +15,8 @@ const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const BOSS_MELEE_DISTANCE = 2.75;
 const BOSS_HURT_CONFIRM_TIMEOUT_MS = 1_800;
 const PARTY_CONVERGENCE_DISTANCE = 9.0;
+const PARTY_CONVERGENCE_VERTICAL_DELTA = 2.0;
+const PARTY_PATHFIND_GOAL_RADIUS = 2;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 const diagnostic = {
@@ -104,6 +106,11 @@ function partyDistance(first, second) {
   return first.distanceTo(second);
 }
 
+function partyCombatReady(first, second) {
+  return partyDistance(first, second) <= PARTY_CONVERGENCE_DISTANCE
+    && Math.abs(first.y - second.y) <= PARTY_CONVERGENCE_VERTICAL_DELTA;
+}
+
 function formatPosition(tracked) {
   const position = tracked?.bot?.entity?.position;
   if (!position) {
@@ -137,8 +144,12 @@ function buildFailureDiagnosticLines(error) {
   const leader = diagnostic.leader;
   const mate = diagnostic.mate;
   let distance = 'unavailable';
+  let verticalDelta = 'unavailable';
   if (leader?.bot?.entity?.position && mate?.bot?.entity?.position) {
     distance = partyDistance(leader.bot.entity.position, mate.bot.entity.position).toFixed(2);
+    verticalDelta = Math.abs(
+      leader.bot.entity.position.y - mate.bot.entity.position.y
+    ).toFixed(2);
   }
 
   return [
@@ -149,6 +160,7 @@ function buildFailureDiagnosticLines(error) {
     `- leader position: \`${formatPosition(leader)}\``,
     `- mate position: \`${formatPosition(mate)}\``,
     `- party distance: \`${distance}\``,
+    `- party vertical delta: \`${verticalDelta}\``,
     `- leader vitals: \`${formatClientVitals(leader).replace(/`/g, "'")}\``,
     `- mate vitals: \`${formatClientVitals(mate).replace(/`/g, "'")}\``,
     `- boss entity id: \`${diagnostic.bossId ?? 'unavailable'}\``,
@@ -315,7 +327,7 @@ async function walkIntoBossMeleeRange(tracked, bossId, timeoutMs) {
   }
 }
 
-async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
+async function pathfindToward(tracked, targetTracked, timeoutMs) {
   const { bot, username } = tracked;
   assertConnected(tracked, 'before pathfinding convergence');
   assertConnected(targetTracked, 'before pathfinding convergence target');
@@ -326,12 +338,11 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
   movements.allow1by1towers = false;
   bot.pathfinder.setMovements(movements);
 
-  const goalRadius = Math.max(2, Math.floor(stopDistance - 1));
   const goal = new GoalNear(
     Math.floor(target.x),
     Math.floor(target.y),
     Math.floor(target.z),
-    goalRadius
+    PARTY_PATHFIND_GOAL_RADIUS
   );
 
   try {
@@ -349,14 +360,14 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
 
   assertConnected(tracked, 'after pathfinding convergence');
   assertConnected(targetTracked, 'after pathfinding convergence target');
-  return partyDistance(bot.entity.position, targetTracked.bot.entity.position) <= stopDistance;
+  return partyCombatReady(bot.entity.position, targetTracked.bot.entity.position);
 }
 
 async function convergePartyClients(leader, mate) {
   assertConnected(leader, 'before convergence');
   assertConnected(mate, 'before convergence');
 
-  if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+  if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
     return true;
   }
 
@@ -367,26 +378,28 @@ async function convergePartyClients(leader, mate) {
 
   for (const [mover, target] of attempts) {
     const before = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+    const verticalDelta = Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y);
     console.log(
-      `Party convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
+      `Party convergence mover=${mover.username} target=${target.username} `
+      + `distance=${before.toFixed(2)} verticalDelta=${verticalDelta.toFixed(2)}`
     );
 
-    if (await pathfindToward(mover, target, PARTY_CONVERGENCE_DISTANCE, 20_000)) {
+    if (await pathfindToward(mover, target, 20_000)) {
       return true;
     }
 
     await walkToward(
       mover,
       () => target.bot.entity?.position,
-      PARTY_CONVERGENCE_DISTANCE,
+      PARTY_PATHFIND_GOAL_RADIUS,
       7_500
     );
-    if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+    if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
       return true;
     }
   }
 
-  return partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
+  return partyCombatReady(leader.bot.entity.position, mate.bot.entity.position);
 }
 
 async function keepNearStart(tracked, start) {
@@ -488,19 +501,23 @@ async function main() {
     diagnostic.phase = 'party-convergence';
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
+      const distance = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+      const verticalDelta = Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y);
       throw new Error(
-        `Party clients could not converge within start boundary; distance=${partyDistance(
-          leader.bot.entity.position,
-          mate.bot.entity.position
-        ).toFixed(2)}`
+        `Party clients could not reach combat-ready convergence; `
+        + `distance=${distance.toFixed(2)} verticalDelta=${verticalDelta.toFixed(2)}`
       );
     }
     assertConnected(leader, 'before party start');
     assertConnected(mate, 'before party start');
-    console.log(`Party clients converged; distance=${partyDistance(
-      leader.bot.entity.position,
-      mate.bot.entity.position
-    ).toFixed(2)} blocks.`);
+    console.log(
+      `Party clients combat-ready; distance=${partyDistance(
+        leader.bot.entity.position,
+        mate.bot.entity.position
+      ).toFixed(2)} verticalDelta=${Math.abs(
+        leader.bot.entity.position.y - mate.bot.entity.position.y
+      ).toFixed(2)} blocks.`
+    );
 
     const leaderStart = leader.bot.entity.position.clone();
     const mateStart = mate.bot.entity.position.clone();
@@ -574,7 +591,6 @@ async function main() {
     while (Date.now() < killDeadline) {
       assertConnected(leader, 'during party kill verification');
       assertConnected(mate, 'during party kill verification');
-
       const status = rcon('boss status');
       if (status.includes('No active Stone Warden encounter.')) {
         diagnostic.phase = 'reward-delivery';
