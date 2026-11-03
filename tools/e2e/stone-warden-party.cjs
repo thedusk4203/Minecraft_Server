@@ -178,12 +178,23 @@ function buildFailureDiagnosticLines(error) {
 
 function writeFailureSummary(error) {
   const lines = buildFailureDiagnosticLines(error);
+  const diagnosticText = [
+    'STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_BEGIN',
+    ...lines,
+    'STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_END',
+    ''
+  ].join('\n');
 
-  console.error('STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_BEGIN');
-  for (const line of lines) {
-    console.error(line);
+  console.error(diagnosticText.trimEnd());
+
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (runnerTemp) {
+    try {
+      appendFileSync(`${runnerTemp}/stone-vault-party.log`, diagnosticText, 'utf8');
+    } catch (artifactError) {
+      console.error('Failed to persist Stone Warden diagnostic artifact:', artifactError);
+    }
   }
-  console.error('STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_END');
 
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) {
