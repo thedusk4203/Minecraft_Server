@@ -15,13 +15,22 @@ const PAPER_SERVICE = process.env.E2E_PAPER_SERVICE || 'paper-e2e';
 const BOSS_MELEE_DISTANCE = 2.75;
 const BOSS_HURT_CONFIRM_TIMEOUT_MS = 1_800;
 const PARTY_CONVERGENCE_DISTANCE = 9.0;
+const PARTY_CONVERGENCE_VERTICAL_DELTA = 2.0;
+const PARTY_PATHFIND_GOAL_RADIUS = 2;
 const CONNECTION_THROTTLE_CLEAR_MS = 5_500;
 
 const diagnostic = {
   phase: 'startup',
   leader: null,
   mate: null,
-  bossId: null
+  bossId: null,
+  leaderAttackAttempts: 0,
+  leaderConfirmedHits: 0,
+  mateAttackAttempts: 0,
+  mateConfirmedHits: 0,
+  lastAttackContext: null,
+  lastAttackDistance: null,
+  lastAttackResult: null
 };
 
 function sleep(ms) {
@@ -97,6 +106,11 @@ function partyDistance(first, second) {
   return first.distanceTo(second);
 }
 
+function partyCombatReady(first, second) {
+  return partyDistance(first, second) <= PARTY_CONVERGENCE_DISTANCE
+    && Math.abs(first.y - second.y) <= PARTY_CONVERGENCE_VERTICAL_DELTA;
+}
+
 function formatPosition(tracked) {
   const position = tracked?.bot?.entity?.position;
   if (!position) {
@@ -105,20 +119,40 @@ function formatPosition(tracked) {
   return `${position.x.toFixed(2)},${position.y.toFixed(2)},${position.z.toFixed(2)}`;
 }
 
-function writeFailureSummary(error) {
-  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
-  if (!summaryPath) {
-    return;
+function formatBossObservation(tracked) {
+  if (!tracked?.bot || diagnostic.bossId == null) {
+    return 'unavailable';
   }
+  const boss = tracked.bot.entities?.[diagnostic.bossId];
+  const playerPosition = tracked.bot.entity?.position;
+  if (!boss?.position || !playerPosition) {
+    return 'not-visible';
+  }
+  return `id=${boss.id} position=${boss.position.x.toFixed(2)},${boss.position.y.toFixed(2)},${boss.position.z.toFixed(2)} distance=${playerPosition.distanceTo(boss.position).toFixed(2)}`;
+}
 
+function formatClientVitals(tracked) {
+  if (!tracked?.bot) {
+    return 'unavailable';
+  }
+  const health = Number.isFinite(tracked.bot.health) ? tracked.bot.health.toFixed(1) : 'unavailable';
+  const food = Number.isFinite(tracked.bot.food) ? tracked.bot.food.toFixed(1) : 'unavailable';
+  return `health=${health} food=${food} connected=${Boolean(tracked.bot.entity)} kicked=${JSON.stringify(tracked.kicked?.() || null)}`;
+}
+
+function buildFailureDiagnosticLines(error) {
   const leader = diagnostic.leader;
   const mate = diagnostic.mate;
   let distance = 'unavailable';
+  let verticalDelta = 'unavailable';
   if (leader?.bot?.entity?.position && mate?.bot?.entity?.position) {
     distance = partyDistance(leader.bot.entity.position, mate.bot.entity.position).toFixed(2);
+    verticalDelta = Math.abs(
+      leader.bot.entity.position.y - mate.bot.entity.position.y
+    ).toFixed(2);
   }
 
-  const lines = [
+  return [
     '### Stone Warden party E2E diagnostic',
     '',
     `- phase: \`${diagnostic.phase}\``,
@@ -126,12 +160,35 @@ function writeFailureSummary(error) {
     `- leader position: \`${formatPosition(leader)}\``,
     `- mate position: \`${formatPosition(mate)}\``,
     `- party distance: \`${distance}\``,
+    `- party vertical delta: \`${verticalDelta}\``,
+    `- leader vitals: \`${formatClientVitals(leader).replace(/`/g, "'")}\``,
+    `- mate vitals: \`${formatClientVitals(mate).replace(/`/g, "'")}\``,
     `- boss entity id: \`${diagnostic.bossId ?? 'unavailable'}\``,
+    `- boss seen by leader: \`${formatBossObservation(leader)}\``,
+    `- boss seen by mate: \`${formatBossObservation(mate)}\``,
     `- boss status: \`${safeRcon('boss status').replace(/`/g, "'")}\``,
+    `- leader attacks: \`attempts=${diagnostic.leaderAttackAttempts} confirmed=${diagnostic.leaderConfirmedHits}\``,
+    `- mate attacks: \`attempts=${diagnostic.mateAttackAttempts} confirmed=${diagnostic.mateConfirmedHits}\``,
+    `- last attack: \`context=${diagnostic.lastAttackContext ?? 'unavailable'} distance=${diagnostic.lastAttackDistance ?? 'unavailable'} result=${diagnostic.lastAttackResult ?? 'unavailable'}\``,
     `- leader shard: \`${leader ? hasStoneWardenShard(leader) : false}\``,
     `- mate shard: \`${mate ? hasStoneWardenShard(mate) : false}\``,
     ''
   ];
+}
+
+function writeFailureSummary(error) {
+  const lines = buildFailureDiagnosticLines(error);
+
+  console.error('STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_BEGIN');
+  for (const line of lines) {
+    console.error(line);
+  }
+  console.error('STONE_WARDEN_PARTY_E2E_DIAGNOSTIC_END');
+
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) {
+    return;
+  }
 
   try {
     appendFileSync(summaryPath, `${lines.join('\n')}\n`, 'utf8');
@@ -270,7 +327,7 @@ async function walkIntoBossMeleeRange(tracked, bossId, timeoutMs) {
   }
 }
 
-async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
+async function pathfindToward(tracked, targetTracked, timeoutMs) {
   const { bot, username } = tracked;
   assertConnected(tracked, 'before pathfinding convergence');
   assertConnected(targetTracked, 'before pathfinding convergence target');
@@ -281,12 +338,11 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
   movements.allow1by1towers = false;
   bot.pathfinder.setMovements(movements);
 
-  const goalRadius = Math.max(2, Math.floor(stopDistance - 1));
   const goal = new GoalNear(
     Math.floor(target.x),
     Math.floor(target.y),
     Math.floor(target.z),
-    goalRadius
+    PARTY_PATHFIND_GOAL_RADIUS
   );
 
   try {
@@ -304,14 +360,14 @@ async function pathfindToward(tracked, targetTracked, stopDistance, timeoutMs) {
 
   assertConnected(tracked, 'after pathfinding convergence');
   assertConnected(targetTracked, 'after pathfinding convergence target');
-  return partyDistance(bot.entity.position, targetTracked.bot.entity.position) <= stopDistance;
+  return partyCombatReady(bot.entity.position, targetTracked.bot.entity.position);
 }
 
 async function convergePartyClients(leader, mate) {
   assertConnected(leader, 'before convergence');
   assertConnected(mate, 'before convergence');
 
-  if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+  if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
     return true;
   }
 
@@ -322,26 +378,28 @@ async function convergePartyClients(leader, mate) {
 
   for (const [mover, target] of attempts) {
     const before = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+    const verticalDelta = Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y);
     console.log(
-      `Party convergence mover=${mover.username} target=${target.username} distance=${before.toFixed(2)}`
+      `Party convergence mover=${mover.username} target=${target.username} `
+      + `distance=${before.toFixed(2)} verticalDelta=${verticalDelta.toFixed(2)}`
     );
 
-    if (await pathfindToward(mover, target, PARTY_CONVERGENCE_DISTANCE, 20_000)) {
+    if (await pathfindToward(mover, target, 20_000)) {
       return true;
     }
 
     await walkToward(
       mover,
       () => target.bot.entity?.position,
-      PARTY_CONVERGENCE_DISTANCE,
+      PARTY_PATHFIND_GOAL_RADIUS,
       7_500
     );
-    if (partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE) {
+    if (partyCombatReady(leader.bot.entity.position, mate.bot.entity.position)) {
       return true;
     }
   }
 
-  return partyDistance(leader.bot.entity.position, mate.bot.entity.position) <= PARTY_CONVERGENCE_DISTANCE;
+  return partyCombatReady(leader.bot.entity.position, mate.bot.entity.position);
 }
 
 async function keepNearStart(tracked, start) {
@@ -360,12 +418,25 @@ async function attackBossAndConfirmDamage(tracked, bossId, context) {
   const inReach = await walkIntoBossMeleeRange(tracked, bossId, 3_500);
   const target = bot.entities[bossId];
   if (!inReach || !target) {
+    diagnostic.lastAttackContext = context;
+    diagnostic.lastAttackDistance = 'unavailable';
+    diagnostic.lastAttackResult = 'target-unreachable';
     return false;
   }
 
   const distance = bot.entity.position.distanceTo(target.position);
+  diagnostic.lastAttackContext = context;
+  diagnostic.lastAttackDistance = distance.toFixed(2);
   if (distance > BOSS_MELEE_DISTANCE) {
+    diagnostic.lastAttackResult = 'out-of-range';
     return false;
+  }
+
+  const isLeader = tracked.username === LEADER_NAME;
+  if (isLeader) {
+    diagnostic.leaderAttackAttempts++;
+  } else if (tracked.username === MATE_NAME) {
+    diagnostic.mateAttackAttempts++;
   }
 
   await bot.lookAt(target.position.offset(0, 1.0, 0), true);
@@ -398,7 +469,16 @@ async function attackBossAndConfirmDamage(tracked, bossId, context) {
   });
 
   bot.attack(target, true);
-  return confirmedDamage;
+  const confirmed = await confirmedDamage;
+  diagnostic.lastAttackResult = confirmed ? 'confirmed' : 'hurt-timeout';
+  if (confirmed) {
+    if (isLeader) {
+      diagnostic.leaderConfirmedHits++;
+    } else if (tracked.username === MATE_NAME) {
+      diagnostic.mateConfirmedHits++;
+    }
+  }
+  return confirmed;
 }
 
 async function main() {
@@ -421,19 +501,23 @@ async function main() {
     diagnostic.phase = 'party-convergence';
     const converged = await convergePartyClients(leader, mate);
     if (!converged) {
+      const distance = partyDistance(leader.bot.entity.position, mate.bot.entity.position);
+      const verticalDelta = Math.abs(leader.bot.entity.position.y - mate.bot.entity.position.y);
       throw new Error(
-        `Party clients could not converge within start boundary; distance=${partyDistance(
-          leader.bot.entity.position,
-          mate.bot.entity.position
-        ).toFixed(2)}`
+        `Party clients could not reach combat-ready convergence; `
+        + `distance=${distance.toFixed(2)} verticalDelta=${verticalDelta.toFixed(2)}`
       );
     }
     assertConnected(leader, 'before party start');
     assertConnected(mate, 'before party start');
-    console.log(`Party clients converged; distance=${partyDistance(
-      leader.bot.entity.position,
-      mate.bot.entity.position
-    ).toFixed(2)} blocks.`);
+    console.log(
+      `Party clients combat-ready; distance=${partyDistance(
+        leader.bot.entity.position,
+        mate.bot.entity.position
+      ).toFixed(2)} verticalDelta=${Math.abs(
+        leader.bot.entity.position.y - mate.bot.entity.position.y
+      ).toFixed(2)} blocks.`
+    );
 
     const leaderStart = leader.bot.entity.position.clone();
     const mateStart = mate.bot.entity.position.clone();
@@ -507,7 +591,6 @@ async function main() {
     while (Date.now() < killDeadline) {
       assertConnected(leader, 'during party kill verification');
       assertConnected(mate, 'during party kill verification');
-
       const status = rcon('boss status');
       if (status.includes('No active Stone Warden encounter.')) {
         diagnostic.phase = 'reward-delivery';
