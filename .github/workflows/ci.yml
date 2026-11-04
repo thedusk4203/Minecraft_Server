@@ -260,6 +260,21 @@ jobs:
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=started .* participants=2'
           echo "$logs" | grep -q 'BOSS_TELEMETRY event=completed'
 
+      - name: Run Stone Vault participant-loss real-client E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-abandon.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-abandon.log"
+
+      - name: Upload Stone Vault participant-loss E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-participant-loss-e2e-log
+          path: ${{ runner.temp }}/stone-vault-abandon.log
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Run Stone Vault two-client real-client E2E
         shell: bash
         run: |
