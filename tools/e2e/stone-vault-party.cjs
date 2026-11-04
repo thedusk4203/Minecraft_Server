@@ -213,8 +213,14 @@ function isIronGolem(entity) {
   return name === 'irongolem' || name.includes('irongolem');
 }
 
+function stoneWardenShardCount(tracked) {
+  return tracked.bot.inventory.items()
+    .filter((item) => item.name === 'amethyst_shard')
+    .reduce((count, item) => count + item.count, 0);
+}
+
 function hasStoneWardenShard(tracked) {
-  return tracked.bot.inventory.items().some((item) => item.name === 'amethyst_shard');
+  return stoneWardenShardCount(tracked) > 0;
 }
 
 function createTrackedBot(username) {
@@ -722,11 +728,26 @@ async function main() {
           250
         );
 
+        // Replay each player's normal recovery surface AFTER successful delivery.
+        // No RCON reward mutations or inventory injection: only real player commands.
+        const initialCounts = [stoneWardenShardCount(leader), stoneWardenShardCount(mate)];
+        if (initialCounts[0] !== 1 || initialCounts[1] !== 1) {
+          throw new Error(`Stone Vault delivered duplicate/missing shards: ${initialCounts.join(',')}`);
+        }
+        leader.bot.chat('/boss recover');
+        mate.bot.chat('/boss recover');
+        await sleep(2_000);
+        const replayCounts = [stoneWardenShardCount(leader), stoneWardenShardCount(mate)];
+        if (replayCounts[0] !== 1 || replayCounts[1] !== 1) {
+          throw new Error(`Stone Vault recovery replay changed shard count: ${replayCounts.join(',')}`);
+        }
+        console.log('STONE_VAULT_ITEM_RECOVERY_REPLAY_PASS both real clients retained exactly one shard');
+
         vaultDiagnostics.phase = 'runtime-cleanup';
         await waitFor('Stone Vault local runtime cleanup', () => {
           return rcon('dungeon status').includes('No active Stone Vault activity.');
         }, 10_000, 250);
-        console.log(`Stone Vault completed with shard visible to both real clients; confirmedBossHits=${confirmedBossHits}.`);
+        console.log(`Stone Vault completed with exactly one shard per real client; confirmedBossHits=${confirmedBossHits}.`);
         return;
       }
 
