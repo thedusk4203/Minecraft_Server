@@ -167,7 +167,7 @@ Receipt:
 - Merge-state CI `41017540269` succeeded.
 
 ## Phase 4 — PvE content
-Status: in progress
+Status: complete / frozen
 
 Deliverables:
 - Encounter framework
@@ -334,7 +334,7 @@ Receipts:
 - Freeze receipt: `docs/PHASE4C2_FREEZE.md`.
 
 ### Phase 4D — First Structured PvE Activity
-Status: next
+Status: complete / frozen
 
 Scope:
 - one short, replayable MVP dungeon or equivalent structured PvE activity;
@@ -355,7 +355,17 @@ Exit gate:
 - repeated completion/recovery cannot intentionally duplicate currency or item rewards;
 - the frozen Phase 4A–4C2 regression gates remain green.
 
+Freeze verification:
+- Phase 4D implementation PRs #23–#28 and corrective/acceptance PRs #31, #33–#38 are merged.
+- Frozen runtime merge `49a6675bec70b5ac7fac9aae65680cc68bd9d473`; frozen runtime tree `80d694a3b2a3b377681d23a7fbab7dcb6021ed37`.
+- Final integrated PR #36 head `2a776d704d5e7288c0d519fa92cdac234e715164` passed CI #207 (`41801665801`).
+- Exact **post-merge main** commit passed CI #208 (`41803211457`) — 47 successful steps, zero failures.
+- Two-client full Stone Vault and all required disconnect, pre-activation, wipe, restart, missing-mob, boss-rejection, stale callback and reward-replay gates passed.
+- Freeze receipt: `docs/PHASE4D_FREEZE.md`.
+
 ## Phase 5 — Commerce and cosmetics
+Status: next
+
 Deliverables:
 - Entitlement model
 - Cosmetic framework
@@ -420,18 +430,17 @@ Candidate expansion after the gate:
 - additional survival shards/content
 
 ## Immediate next implementation task
-Define and implement **Phase 4D — First Structured PvE Activity** as the next reviewable Phase 4 vertical slice consuming the frozen Phase 4A–4C2 contracts.
+
+Prepare **Phase 5A — Commerce Policy, Product Catalog and Entitlement Foundation** as a docs-first design/review slice. Implementation of real-money checkout, provider webhooks and customer entitlements is not yet authorized.
 
 Acceptance checklist:
-- choose one concrete MVP dungeon or equivalent structured activity without adding a second major game mode;
-- document its entry rule and party-size assumptions before runtime implementation;
-- define 2–3 encounter beats and one clear boss role with readable player-facing progression;
-- use the frozen durable encounter-run/participant lifecycle instead of inventing a parallel authority;
-- define reset, wipe/failure, disconnect, reconnect and server-restart behavior explicitly;
-- keep content data-driven where practical and validate semantic fingerprints/versioning;
-- integrate deterministic rewards without changing the frozen Stone Warden 250-COINS or shard semantics;
-- prevent replay/recovery from intentionally duplicating activity rewards;
-- emit telemetry for entry, beat progression, boss start, completion and failure;
-- add deterministic integration/failure-path coverage before E2E;
-- verify the full activity with a small real-client party through normal client-authored actions;
-- keep market recovery, crossplay and every frozen Phase 4A–4C2 regression gate green.
+- review the current Minecraft EULA and Usage Guidelines against a concrete non-pay-to-win cosmetic/supporter offering;
+- document branding, all-ages, authentic-game-access, cape restrictions, price disclosure, contact and online purchase-history requirements;
+- define an immutable catalog version, SKU identity, cosmetic entitlement lifecycle, canonical player ownership and provider-independent purchase identity;
+- design idempotent payment-event intake, entitlement assignment, refund/revocation and crash-safe reconciliation without modifying the frozen Phase 4A–4D reward ledger;
+- reserve all paid perks to noncompetitive cosmetics/supporter identity until a specific compliance review accepts any broader benefit;
+- specify audit, privacy/data retention, refunds/disputes and security of webhook credentials;
+- write deterministic PostgreSQL concurrency/idempotency tests and sandboxed mock-purchase E2Es before integrating any real payment provider;
+- preserve all existing Phase 1–4D Java/Bedrock/crossplay, market, boss, Stone Vault and reward-regression gates.
+
+Phase 5A remains **DESIGN ONLY** until its own readiness review and exact tested implementation scope are approved.
