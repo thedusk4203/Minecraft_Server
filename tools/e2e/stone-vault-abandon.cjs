@@ -139,6 +139,8 @@ async function main() {
     throw error;
   } finally {
     if (bot) await endBot(bot);
+    // Respect Paper's normal connection throttle before the following two-client E2E.
+    await sleep(5_500);
   }
 }
 
