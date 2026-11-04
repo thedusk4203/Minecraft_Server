@@ -85,3 +85,28 @@ tasks.shadowJar {
 tasks.assemble {
     dependsOn(tasks.shadowJar)
 }
+
+// E2E-only Paper fault-injection helper. These tasks are intentionally NOT
+// dependencies of assemble, test or shadowJar: the production jar remains clean.
+val compileStoneVaultE2EFault = tasks.register<JavaCompile>("compileStoneVaultE2EFault") {
+    description = "Compile the isolated E2E-only Stone Vault fault helper."
+    group = "verification"
+    source(fileTree("tools/e2e/fault-plugin") { include("**/*.java") })
+    classpath = sourceSets.main.get().compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("e2e-fault-classes"))
+    javaCompiler.set(javaToolchains.compilerFor {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    })
+    options.release.set(25)
+}
+
+tasks.register<Jar>("packageStoneVaultE2EFault") {
+    description = "Package the isolated fault helper for ephemeral Paper E2E only."
+    group = "verification"
+    dependsOn(compileStoneVaultE2EFault)
+    archiveFileName.set("stone-vault-e2e-fault.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("libs"))
+    from(compileStoneVaultE2EFault.map { it.destinationDirectory })
+    from("tools/e2e/fault-plugin/plugin.yml")
+}
+
