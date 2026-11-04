@@ -140,6 +140,21 @@ async function main() {
     }
     await quitBot(bot);
     bot = null;
+    // Mineflayer's socket close happens before Paper necessarily removes the
+    // player from Bukkit's online registry. Verify server-side logout while
+    // V9 attach is still blocked, or finishStart may see a stale online player
+    // and legitimately activate the wave before its 200-tick wipe timeout.
+    const onlineList = await waitFor('Paper-side disconnect before V9 attach', () => {
+      const list = rcon('list').replace(/\\u001b\\[[0-9;]*m/g, '');
+      if (!/players online:/i.test(list)) {
+        throw new Error(`Unexpected Paper player-list response: ${list}`);
+      }
+      return list.includes(PLAYER) ? null : list;
+    }, 15_000);
+    console.log(`E2E_VAULT_PREACTIVATION_SERVER_LOGOUT_CONFIRMED list=${onlineList}`);
+    // Allow at least a Paper tick after the disconnect observation before
+    // asynchronous V9 attach is unblocked.
+    await sleep(150);
     console.log('E2E_VAULT_PREACTIVATION_CLIENT_DISCONNECTED_BEFORE_ATTACH');
     await lock.release();
     lock = null;
@@ -163,6 +178,8 @@ async function main() {
     console.error('STONE_VAULT_PREACTIVATION_DISCONNECT_E2E_DIAGNOSTIC', JSON.stringify({
       runId, error: String(error.stack || error),
       lockStdout: lock?.stdout, lockStderr: lock?.stderr,
+      durable: (() => { try { return runId ? sql(`SELECT status || '|' || coalesce(terminal_reason, '') FROM encounter_run WHERE run_id = '${runId}'::uuid`) : null; } catch (e) { return String(e); } })(),
+      playerList: (() => { try { return rcon('list'); } catch (e) { return String(e); } })(),
       dungeon: (() => { try { return rcon('dungeon status'); } catch (e) { return String(e); } })()
     }));
     throw error;

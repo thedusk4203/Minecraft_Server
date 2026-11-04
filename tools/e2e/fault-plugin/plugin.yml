@@ -1,0 +1,17 @@
+name: StoneVaultE2EFaults
+version: '1.0.0'
+main: dev.thedusk.minecraftserver.e2efault.StoneVaultFaultPlugin
+description: CI-only fault injection for Stone Vault failure-path acceptance; never deploy to production.
+api-version: '26.3'
+depend: [MinecraftServerCore]
+
+commands:
+  vaultfault:
+    description: E2E-only runtime fault injector (console/RCON only).
+    usage: /vaultfault <remove|killone|clearwave|rejectboss|armduplicate|replay> <run-uuid>
+    permission: minecraftserver.e2efault
+
+permissions:
+  minecraftserver.e2efault:
+    description: CI-only E2E fault injection.
+    default: op

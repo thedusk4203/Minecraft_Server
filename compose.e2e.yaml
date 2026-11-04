@@ -28,6 +28,8 @@ services:
       GENERATE_STRUCTURES: "FALSE"
       ONLINE_MODE: "FALSE"
       ENFORCE_SECURE_PROFILE: "FALSE"
+      # CI-only fault helper is not part of MinecraftServerCore production builds.
+      STONE_VAULT_E2E_FAULTS_ENABLED: "true"
       SPAWN_PROTECTION: "0"
       SPAWN_RADIUS: "0"
       MEMORY: "3G"

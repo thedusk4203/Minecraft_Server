@@ -151,6 +151,19 @@ jobs:
         if: always()
         run: docker compose down -v
 
+      - name: Build test-only Stone Vault fault helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle packageStoneVaultE2EFault --no-daemon
+          test -s build/libs/stone-vault-e2e-fault.jar
+          jar tf build/libs/stone-vault-e2e-fault.jar | grep -Fxq plugin.yml
+          if jar tf build/libs/minecraft-server-core-*.jar | grep -q 'StoneVaultFaultPlugin'; then
+            echo "Test-only fault class leaked into production core jar" >&2
+            exit 1
+          fi
+          echo "Isolated E2E fault helper packaged without altering core artifact"
+
       - name: Set up Node 24 for real-client E2E
         uses: actions/setup-node@v7.1.0
         with:
@@ -377,6 +390,21 @@ jobs:
         with:
           name: stone-vault-preactivation-e2e-log
           path: ${{ runner.temp }}/stone-vault-preactivation.log
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Run Stone Vault injected failure-path E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-faults.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-faults.log"
+
+      - name: Upload Stone Vault injected failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-injected-fault-e2e-log
+          path: ${{ runner.temp }}/stone-vault-faults.log
           if-no-files-found: ignore
           retention-days: 1
 
