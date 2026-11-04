@@ -350,6 +350,21 @@ jobs:
           echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=boss_activated run=$run_id boss=stone_warden participants=2"
           echo "$logs" | grep -q "ACTIVITY_TELEMETRY event=completed run=$run_id"
 
+      - name: Run Stone Vault restart recovery real-client E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-restart.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-restart.log"
+
+      - name: Upload Stone Vault restart E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-restart-e2e-log
+          path: ${{ runner.temp }}/stone-vault-restart.log
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Show E2E logs on failure
         if: failure()
         run: |
