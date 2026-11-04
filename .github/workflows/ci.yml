@@ -155,7 +155,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew packageStoneVaultE2EFault --no-daemon
+          gradle packageStoneVaultE2EFault --no-daemon
           test -s build/libs/stone-vault-e2e-fault.jar
           jar tf build/libs/stone-vault-e2e-fault.jar | grep -Fxq plugin.yml
           if jar tf build/libs/minecraft-server-core-*.jar | grep -q 'StoneVaultFaultPlugin'; then
