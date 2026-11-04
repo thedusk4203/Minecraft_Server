@@ -365,6 +365,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
 
+      - name: Run Stone Vault preactivation disconnect real-client E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-preactivation.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-preactivation.log"
+
+      - name: Upload Stone Vault preactivation diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-preactivation-e2e-log
+          path: ${{ runner.temp }}/stone-vault-preactivation.log
+          if-no-files-found: ignore
+          retention-days: 1
+
       - name: Show E2E logs on failure
         if: failure()
         run: |
