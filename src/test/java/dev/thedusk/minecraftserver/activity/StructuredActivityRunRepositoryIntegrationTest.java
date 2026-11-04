@@ -9,10 +9,16 @@ import dev.thedusk.minecraftserver.audit.AuditLog;
 import dev.thedusk.minecraftserver.encounter.EncounterDefinition;
 import dev.thedusk.minecraftserver.encounter.EncounterRun;
 import dev.thedusk.minecraftserver.encounter.EncounterRunRepository;
+import dev.thedusk.minecraftserver.economy.EconomyLedger;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardRepository;
+import dev.thedusk.minecraftserver.reward.StoneWardenItemRewardStatus;
+import dev.thedusk.minecraftserver.reward.StoneWardenRewardService;
 import dev.thedusk.minecraftserver.identity.PlayerIdentity;
 import dev.thedusk.minecraftserver.identity.PlayerIdentityRepository;
 import dev.thedusk.minecraftserver.persistence.DatabaseManager;
 import dev.thedusk.minecraftserver.persistence.DatabaseSettings;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
@@ -59,6 +65,8 @@ class StructuredActivityRunRepositoryIntegrationTest {
     private static PlayerIdentityRepository identities;
     private static EncounterRunRepository encounters;
     private static StructuredActivityRunRepository activities;
+    private static StoneWardenRewardService currencyRewards;
+    private static StoneWardenItemRewardRepository itemRewards;
 
     @BeforeAll
     static void openDatabase() {
@@ -74,6 +82,10 @@ class StructuredActivityRunRepositoryIntegrationTest {
         identities = new PlayerIdentityRepository(database);
         encounters = new EncounterRunRepository(database, auditLog);
         activities = new StructuredActivityRunRepository(database, auditLog);
+        currencyRewards = new StoneWardenRewardService(
+                database, auditLog, new EconomyLedger(database, auditLog)
+        );
+        itemRewards = new StoneWardenItemRewardRepository(database, auditLog);
     }
 
     @AfterAll
@@ -327,6 +339,60 @@ class StructuredActivityRunRepositoryIntegrationTest {
         StructuredActivityRun durable = activities.find(encounter.runId()).orElseThrow();
         assertEquals(StructuredActivityBeat.OUTER_SEAL, durable.currentBeat());
         assertEquals(0L, durable.version());
+    }
+
+    @Test
+    void completedStoneVaultReconcilesAndReplaysFrozenRewardsWithoutDuplication() throws Exception {
+        EncounterRun run = startEncounter(2);
+        activities.attach(ACTIVITY, ENCOUNTER, run.runId(), UUID.randomUUID());
+        activities.advance(run.runId(), StructuredActivityBeat.OUTER_SEAL,
+                StructuredActivityBeat.INNER_GUARD, UUID.randomUUID());
+        activities.advance(run.runId(), StructuredActivityBeat.INNER_GUARD,
+                StructuredActivityBeat.BOSS, UUID.randomUUID());
+
+        // The same V9-attached run is completed; it has no separate dungeon
+        // economy identity or second boss encounter.
+        encounters.complete(run.runId(), UUID.randomUUID());
+        assertEquals(1, currencyRewards.reconcileCompletedPending());
+        assertEquals(0, currencyRewards.reconcileCompletedPending());
+        var replay = currencyRewards.grantCompleted(run.runId(), UUID.randomUUID());
+        assertEquals(0, replay.newlyGrantedCount());
+        assertEquals(2, replay.replayedCount());
+
+        assertEquals(2, itemRewards.prepareEligibleIntents(UUID.randomUUID()));
+        assertEquals(0, itemRewards.prepareEligibleIntents(UUID.randomUUID()));
+        for (UUID participantId : run.participantPlayerIds()) {
+            var records = itemRewards.findByPlayer(participantId);
+            assertEquals(1, records.size());
+            var record = records.getFirst();
+            assertEquals(record.rewardId(), record.deliveryToken());
+            assertEquals(StoneWardenItemRewardStatus.PREPARED, record.status());
+            byte[] snapshot = new byte[]{1, 7, 2, 9};
+            String sha256 = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(snapshot)
+            );
+            itemRewards.prepareSnapshot(record.rewardId(), snapshot, sha256, UUID.randomUUID());
+            assertEquals(StoneWardenItemRewardStatus.DELIVERED,
+                    itemRewards.markDelivered(record.rewardId(), UUID.randomUUID()).status());
+            // Replaying acknowledgement must not create another terminal event.
+            assertEquals(StoneWardenItemRewardStatus.DELIVERED,
+                    itemRewards.markDelivered(record.rewardId(), UUID.randomUUID()).status());
+        }
+        assertEquals(0, itemRewards.prepareEligibleIntents(UUID.randomUUID()));
+        assertEquals(0, currencyRewards.reconcileCompletedPending());
+
+        assertEquals(1L, countRows("encounter_run"));
+        assertEquals(1L, countRows("structured_activity_run"));
+        assertEquals(2L, countRows("encounter_participant"));
+        assertEquals(2L, countRows("encounter_reward"));
+        assertEquals(2L, countRows("encounter_reward_item"));
+        assertEquals(2L, countRows("economy_transaction"));
+        assertEquals(1L, countAudit("encounter.run_completed"));
+        assertEquals(2L, countAudit("encounter.reward_currency_granted"));
+        assertEquals(2L, countAudit("encounter.reward_item_prepared"));
+        assertEquals(2L, countAudit("encounter.reward_item_delivered"));
+        assertEquals(StructuredActivityBeat.BOSS,
+                activities.find(run.runId()).orElseThrow().currentBeat());
     }
 
     private static EncounterRun startEncounter(int participantCount) {
