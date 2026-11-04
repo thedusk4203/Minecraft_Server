@@ -85,11 +85,13 @@ async function endBot(bot) {
 async function main() {
   let bot;
   let runId;
+  let firstLoginAt = null;
   try {
     if (!rcon('dungeon status').includes('No active Stone Vault activity.')) {
       throw new Error('Stone Vault must be idle before participant-loss E2E');
     }
     bot = await spawnBot();
+    firstLoginAt = Date.now();
     bot.chat('/dungeon start');
     runId = await waitFor('solo Stone Vault start', () => {
       const status = rcon('dungeon status');
@@ -119,7 +121,11 @@ async function main() {
     console.log(`Participant-loss durable state: run=${runId} terminal=${terminal} participants/rewards/items=${counts}`);
 
     // Reconnect same internal player; a terminal attempt must not reactivate or pay out.
-    await sleep(5_500);
+    // Paper enforces a per-player 60-second login cooldown. Preserve it rather
+    // than weakening production security/throttle settings for this test.
+    const reconnectDelay = Math.max(0, 62_000 - (Date.now() - firstLoginAt));
+    console.log(`Waiting ${reconnectDelay}ms for Paper's per-player login cooldown`);
+    await sleep(reconnectDelay);
     bot = await spawnBot();
     await sleep(1_000);
     const statusAfterReconnect = sql(`SELECT status || '|' || coalesce(terminal_reason,'') FROM encounter_run WHERE run_id = '${runId}'::uuid`);

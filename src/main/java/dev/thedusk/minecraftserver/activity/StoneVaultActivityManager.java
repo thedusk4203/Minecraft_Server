@@ -25,6 +25,7 @@ import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
+import org.bukkit.block.Block;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Mob;
@@ -360,10 +361,28 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
         int total = session.currentBeat == StructuredActivityBeat.OUTER_SEAL
                 ? session.definition().outerSealCount()
                 : session.definition().innerGuardCount();
+        double desiredRadius = Math.min(
+                Math.max(4.0, session.definition().arenaRadius() * 0.45),
+                session.definition().arenaRadius() - 2.0
+        );
+        Location center = session.arenaCenter();
+        World world = center.getWorld();
+        // Plan the entire wave before spawning any entities. Open air above a cliff is
+        // passable, but is not a valid mob spawn: it can fall away from combat.
+        List<StoneVaultWaveSpawnPlanner.Cell> sites = StoneVaultWaveSpawnPlanner.select(
+                center.getBlockX(),
+                center.getBlockY(),
+                center.getBlockZ(),
+                total,
+                desiredRadius,
+                session.definition().arenaRadius(),
+                (x, y, z) -> safeWaveStandingCell(world, x, y, z)
+        );
         for (int index = 0; index < total; index++) {
             boolean ranged = session.currentBeat == StructuredActivityBeat.INNER_GUARD
                     && index >= session.definition().innerGuardMeleeCount();
-            Location spawn = waveSpawnLocation(session, index, total);
+            StoneVaultWaveSpawnPlanner.Cell site = sites.get(index);
+            Location spawn = new Location(world, site.x() + 0.5, site.y(), site.z() + 0.5);
             Mob mob = ranged
                     ? spawn.getWorld().spawn(spawn, Skeleton.class)
                     : spawn.getWorld().spawn(spawn, Zombie.class);
@@ -400,24 +419,19 @@ public final class StoneVaultActivityManager implements Listener, AutoCloseable 
         );
     }
 
-    private Location waveSpawnLocation(Session session, int index, int total) {
-        double radius = Math.min(
-                Math.max(4.0, session.definition().arenaRadius() * 0.45),
-                session.definition().arenaRadius() - 2.0
-        );
-        double angle = (Math.PI * 2.0 * index) / Math.max(1, total);
-        Location candidate = session.arenaCenter().clone().add(
-                Math.cos(angle) * radius,
-                0.0,
-                Math.sin(angle) * radius
-        );
-        if (!candidate.getBlock().isPassable()) {
-            candidate.add(0.0, 1.0, 0.0);
+    private static boolean safeWaveStandingCell(World world, int x, int feetY, int z) {
+        if (feetY <= world.getMinHeight() + 1 || feetY >= world.getMaxHeight() - 2) {
+            return false;
         }
-        if (!candidate.getBlock().isPassable()) {
-            candidate = session.arenaCenter().clone().add(0.0, 1.0, 0.0);
-        }
-        return candidate;
+        Block ground = world.getBlockAt(x, feetY - 1, z);
+        Block feet = world.getBlockAt(x, feetY, z);
+        Block head = world.getBlockAt(x, feetY + 1, z);
+        return ground.getType().isSolid()
+                && !ground.isLiquid()
+                && feet.isPassable()
+                && !feet.isLiquid()
+                && head.isPassable()
+                && !head.isLiquid();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
