@@ -155,13 +155,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          paper_api="$(find "$HOME/.gradle/caches/modules-2/files-2.1/io.papermc.paper/paper-api" -type f -name 'paper-api-*.jar' -print -quit)"
-          test -s "$paper_api"
-          mkdir -p build/e2e-fault-classes
-          "$JAVA_HOME/bin/javac" --release 25 -cp "$paper_api" -d build/e2e-fault-classes tools/e2e/fault-plugin/StoneVaultFaultPlugin.java
-          "$JAVA_HOME/bin/jar" --create --file build/libs/stone-vault-e2e-fault.jar -C build/e2e-fault-classes . -C tools/e2e/fault-plugin plugin.yml
+          ./gradlew packageStoneVaultE2EFault --no-daemon
+          test -s build/libs/stone-vault-e2e-fault.jar
           jar tf build/libs/stone-vault-e2e-fault.jar | grep -Fxq plugin.yml
-          echo "Isolated fault helper packaged for ephemeral E2E stack only"
+          if jar tf build/libs/minecraft-server-core-*.jar | grep -q 'StoneVaultFaultPlugin'; then
+            echo "Test-only fault class leaked into production core jar" >&2
+            exit 1
+          fi
+          echo "Isolated E2E fault helper packaged without altering core artifact"
 
       - name: Set up Node 24 for real-client E2E
         uses: actions/setup-node@v7.1.0
