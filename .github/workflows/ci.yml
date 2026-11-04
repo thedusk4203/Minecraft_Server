@@ -151,6 +151,18 @@ jobs:
         if: always()
         run: docker compose down -v
 
+      - name: Build test-only Stone Vault fault helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          paper_api="$(find "$HOME/.gradle/caches/modules-2/files-2.1/io.papermc.paper/paper-api" -type f -name 'paper-api-*.jar' -print -quit)"
+          test -s "$paper_api"
+          mkdir -p build/e2e-fault-classes
+          javac --release 25 -cp "$paper_api" -d build/e2e-fault-classes tools/e2e/fault-plugin/StoneVaultFaultPlugin.java
+          jar --create --file build/libs/stone-vault-e2e-fault.jar -C build/e2e-fault-classes . -C tools/e2e/fault-plugin plugin.yml
+          jar tf build/libs/stone-vault-e2e-fault.jar | grep -Fxq plugin.yml
+          echo "Isolated fault helper packaged for ephemeral E2E stack only"
+
       - name: Set up Node 24 for real-client E2E
         uses: actions/setup-node@v7.1.0
         with:
@@ -362,6 +374,21 @@ jobs:
         with:
           name: stone-vault-restart-e2e-log
           path: ${{ runner.temp }}/stone-vault-restart.log
+          if-no-files-found: ignore
+          retention-days: 1
+
+      - name: Run Stone Vault injected failure-path E2E
+        shell: bash
+        run: |
+          set -o pipefail
+          node tools/e2e/stone-vault-faults.cjs 2>&1 | tee "$RUNNER_TEMP/stone-vault-faults.log"
+
+      - name: Upload Stone Vault injected failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: stone-vault-injected-fault-e2e-log
+          path: ${{ runner.temp }}/stone-vault-faults.log
           if-no-files-found: ignore
           retention-days: 1
 
