@@ -21,6 +21,11 @@ services:
       EULA: "TRUE"
       TYPE: PAPER
       VERSION: "26.3"
+      # Deterministic, walkable combat terrain for real-client acceptance.
+      # Uneven/cliff spawn cases are separately verified by unit tests.
+      LEVEL_TYPE: "FLAT"
+      SEED: "4203"
+      GENERATE_STRUCTURES: "FALSE"
       ONLINE_MODE: "FALSE"
       ENFORCE_SECURE_PROFILE: "FALSE"
       SPAWN_PROTECTION: "0"
