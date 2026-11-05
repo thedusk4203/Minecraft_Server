@@ -90,6 +90,38 @@ print(f"Validated Velocity descriptor id={data.get('id')} version={data.get('ver
 PY
 }
 
+# This jar is prepared as a staging review artifact only. It must NOT be
+# mounted into Paper, deployed, or supplied any Floodgate key by this script.
+verify_spigot_descriptor() {
+  local jar_file="$1"
+  python3 - "$jar_file" "$FLOODGATE_EXPECTED_DESCRIPTOR_VERSION" <<'PY'
+import sys
+import zipfile
+
+jar_path, expected_version = sys.argv[1:]
+with zipfile.ZipFile(jar_path) as archive:
+    try:
+        raw = archive.read("plugin.yml").decode("utf-8")
+    except KeyError as exc:
+        raise SystemExit("Floodgate-Spigot plugin.yml missing") from exc
+    entries = {}
+    for line in raw.splitlines():
+        if ":" in line and not line.lstrip().startswith("#"):
+            key, value = line.split(":", 1)
+            entries[key.strip()] = value.strip().strip("'\\"")
+    main = "org.geysermc.floodgate.SpigotPlugin"
+    if main.replace(".", "/") + ".class" not in set(archive.namelist()):
+        raise SystemExit("Floodgate-Spigot main class missing")
+if entries.get("name", "").lower() != "floodgate":
+    raise SystemExit("Floodgate-Spigot plugin id mismatch")
+if entries.get("main") != main:
+    raise SystemExit("Floodgate-Spigot main entry mismatch")
+if entries.get("version") != expected_version:
+    raise SystemExit("Floodgate-Spigot descriptor version mismatch")
+print("Verified pinned Floodgate-Spigot descriptor and main class (staging artifact only)")
+PY
+}
+
 fetch_geyser() (
   local output_file="$OUTPUT_DIR/Geyser-Velocity.jar"
   local metadata_file temp_file
@@ -152,27 +184,37 @@ PY
 build_floodgate() (
   local output_file="$OUTPUT_DIR/floodgate-velocity.jar"
   local provenance_file="$OUTPUT_DIR/floodgate-velocity.provenance"
+  local staging_spigot_file="$OUTPUT_DIR/floodgate-spigot-staging.jar"
+  local staging_spigot_provenance="$OUTPUT_DIR/floodgate-spigot-staging.provenance"
 
-  if [[ -f "$output_file" && -f "$provenance_file" ]]; then
-    local cached_sha
+  if [[ -f "$output_file" && -f "$provenance_file" \
+      && -f "$staging_spigot_file" && -f "$staging_spigot_provenance" ]]; then
+    local cached_sha cached_spigot_sha
     cached_sha="$(hash256_file "$output_file")"
+    cached_spigot_sha="$(hash256_file "$staging_spigot_file")"
     if grep -Fxq "commit=$FLOODGATE_COMMIT" "$provenance_file" \
       && grep -Fxq "build=$FLOODGATE_BUILD" "$provenance_file" \
       && grep -Fxq "recipe=$FLOODGATE_RECIPE" "$provenance_file" \
-      && grep -Fxq "sha256=$cached_sha" "$provenance_file"; then
+      && grep -Fxq "sha256=$cached_sha" "$provenance_file" \
+      && grep -Fxq "commit=$FLOODGATE_COMMIT" "$staging_spigot_provenance" \
+      && grep -Fxq "build=$FLOODGATE_BUILD" "$staging_spigot_provenance" \
+      && grep -Fxq "recipe=$FLOODGATE_RECIPE" "$staging_spigot_provenance" \
+      && grep -Fxq "sha256=$cached_spigot_sha" "$staging_spigot_provenance"; then
       verify_velocity_descriptor "$output_file" "floodgate" "org.geysermc.floodgate.VelocityPlugin" "$FLOODGATE_EXPECTED_DESCRIPTOR_VERSION"
-      echo "floodgate-velocity.jar already matches pinned source provenance."
+      verify_spigot_descriptor "$staging_spigot_file"
+      echo "Floodgate Velocity and staging Spigot jars already match pinned source provenance."
       exit 0
     fi
   fi
 
-  local work_root source_dir temp_output host_uid host_gid
+  local work_root source_dir temp_output temp_spigot host_uid host_gid
   work_root="$(mktemp -d "$OUTPUT_DIR/.floodgate-build.XXXXXX")"
   source_dir="$work_root/Floodgate"
   temp_output="$(mktemp "$OUTPUT_DIR/.floodgate-velocity.jar.XXXXXX")"
+  temp_spigot="$(mktemp "$OUTPUT_DIR/.floodgate-spigot-staging.jar.XXXXXX")"
   host_uid="$(id -u)"
   host_gid="$(id -g)"
-  trap 'rm -rf "$work_root" "$temp_output"' EXIT
+  trap 'rm -rf "$work_root" "$temp_output" "$temp_spigot"' EXIT
 
   echo "Checking out Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD at $FLOODGATE_COMMIT with recursive submodules..."
   git clone --quiet --filter=blob:none --no-checkout "$FLOODGATE_REPO_URL" "$source_dir"
@@ -218,17 +260,26 @@ build_floodgate() (
     sh -c './gradlew build --no-daemon; rc=$?; chown -R "$HOST_UID:$HOST_GID" /workspace; exit $rc'
 
   local built_jar="$source_dir/velocity/build/libs/floodgate-velocity.jar"
+  local built_spigot_jar="$source_dir/spigot/build/libs/floodgate-spigot.jar"
   if [[ ! -s "$built_jar" ]]; then
     echo "Floodgate build did not produce velocity/build/libs/floodgate-velocity.jar" >&2
     exit 1
   fi
+  if [[ ! -s "$built_spigot_jar" ]]; then
+    echo "Pinned Floodgate build did not produce spigot/build/libs/floodgate-spigot.jar" >&2
+    exit 1
+  fi
 
   cp "$built_jar" "$temp_output"
+  cp "$built_spigot_jar" "$temp_spigot"
   verify_velocity_descriptor "$temp_output" "floodgate" "org.geysermc.floodgate.VelocityPlugin" "$FLOODGATE_EXPECTED_DESCRIPTOR_VERSION"
+  verify_spigot_descriptor "$temp_spigot"
 
-  local built_sha
+  local built_sha built_spigot_sha
   built_sha="$(hash256_file "$temp_output")"
+  built_spigot_sha="$(hash256_file "$temp_spigot")"
   mv -f "$temp_output" "$output_file"
+  mv -f "$temp_spigot" "$staging_spigot_file"
   {
     echo "source=$FLOODGATE_REPO_URL"
     echo "commit=$FLOODGATE_COMMIT"
@@ -241,7 +292,22 @@ build_floodgate() (
     done <<<"$submodule_status"
     echo "sha256=$built_sha"
   } > "$provenance_file"
-  echo "Built Floodgate $FLOODGATE_VERSION build $FLOODGATE_BUILD from exact Git checkout sha256=$built_sha"
+  {
+    echo "source=$FLOODGATE_REPO_URL"
+    echo "commit=$FLOODGATE_COMMIT"
+    echo "source_version=$FLOODGATE_SOURCE_VERSION"
+    echo "runtime_version=$FLOODGATE_VERSION"
+    echo "build=$FLOODGATE_BUILD"
+    echo "recipe=$FLOODGATE_RECIPE"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && echo "submodule=$line"
+    done <<<"$submodule_status"
+    echo "sha256=$built_spigot_sha"
+    echo "purpose=staging-artifact-only-not-installed"
+  } > "$staging_spigot_provenance"
+  echo "Built pinned Floodgate Velocity and staging-only Spigot artifacts from exact source."
+  echo "Floodgate Velocity sha256=$built_sha"
+  echo "Floodgate staging Spigot sha256=$built_spigot_sha (NOT INSTALLED)"
 )
 
 fetch_geyser
