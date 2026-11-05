@@ -73,6 +73,11 @@ jobs:
       - name: Start local stack
         run: docker compose up -d --wait --wait-timeout 300
 
+      - name: Verify running proxy/backend Docker isolation and negative cases
+        run: |
+          python3 tools/security/verify_running_proxy_boundary.py --self-test
+          python3 tools/security/verify_running_proxy_boundary.py
+
       - name: Check PostgreSQL
         run: docker compose exec -T postgres pg_isready -U minecraft -d minecraft
 
