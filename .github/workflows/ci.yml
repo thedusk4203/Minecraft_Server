@@ -40,6 +40,11 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
+      - name: Verify static Velocity/Paper trust boundary and negative cases
+        run: |
+          python3 tools/security/verify_proxy_boundary.py --self-test
+          python3 tools/security/verify_proxy_boundary.py
+
       - name: Build core plugin and unit tests
         run: gradle clean build --no-daemon
 
