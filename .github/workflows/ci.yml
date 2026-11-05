@@ -70,6 +70,24 @@ jobs:
       - name: Prepare pinned crossplay plugins
         run: bash scripts/fetch-crossplay-plugins.sh
 
+      - name: Verify staging-only Floodgate-Spigot provenance and non-installation
+        run: |
+          set -euo pipefail
+          jar_file="build/crossplay-plugins/floodgate-spigot-staging.jar"
+          prov="build/crossplay-plugins/floodgate-spigot-staging.provenance"
+          test -s "$jar_file"
+          test -s "$prov"
+          grep -Fxq "commit=81b65ccb766bf8024858ebf3eefa6974056aecc5" "$prov"
+          grep -Fxq "build=141" "$prov"
+          grep -Fxq "purpose=staging-artifact-only-not-installed" "$prov"
+          sha="$(sha256sum "$jar_file" | cut -d' ' -f1)"
+          grep -Fxq "sha256=$sha" "$prov"
+          jar tf "$jar_file" | grep -Fxq 'org/geysermc/floodgate/SpigotPlugin.class'
+          jar tf "$jar_file" | grep -Fxq 'plugin.yml'
+          ! grep -q 'floodgate-spigot-staging' compose.yaml
+          ! grep -q 'floodgate-spigot-staging' compose.e2e.yaml
+          echo "Pinned Floodgate-Spigot staging jar validated; not mounted into Paper"
+
       - name: Start local stack
         run: docker compose up -d --wait --wait-timeout 300
 
