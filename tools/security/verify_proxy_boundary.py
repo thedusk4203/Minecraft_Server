@@ -63,9 +63,13 @@ def _ports(service: dict[str, Any], errors: list[str], label: str) -> set[tuple[
             if not 1 <= int(published) <= 65535:
                 errors.append("INVALID_PUBLISHED_PORT:" + label)
                 continue
+            if int(published) != target:
+                errors.append("UNEXPECTED_PUBLISHED_PORT:" + label)
         except (KeyError, TypeError, ValueError):
             errors.append("INVALID_PORT_ENTRY:" + label)
             continue
+        if (target, protocol) in found:
+            errors.append("DUPLICATE_PUBLISHED_PORT:" + label)
         found.add((target, protocol))
     return found
 
@@ -231,6 +235,22 @@ class SecurityBoundaryRegression(unittest.TestCase):
                 {"target": 25575, "published": "25575", "protocol": "tcp"}
             ),
             "INCORRECT_PROXY_PUBLIC_PORTS",
+        )
+
+    def test_public_port_remapping_fails_closed(self) -> None:
+        self._expect_rejected(
+            lambda m, c: m["services"]["velocity"]["ports"][0].update(
+                published="35565"
+            ),
+            "UNEXPECTED_PUBLISHED_PORT:velocity",
+        )
+
+    def test_duplicate_proxy_port_fails_closed(self) -> None:
+        self._expect_rejected(
+            lambda m, c: m["services"]["velocity"]["ports"].append(
+                copy.deepcopy(m["services"]["velocity"]["ports"][0])
+            ),
+            "DUPLICATE_PUBLISHED_PORT:velocity",
         )
 
     def test_backend_target_outside_proxy_compose_fails_closed(self) -> None:
