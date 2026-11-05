@@ -108,7 +108,7 @@ with zipfile.ZipFile(jar_path) as archive:
     for line in raw.splitlines():
         if ":" in line and not line.lstrip().startswith("#"):
             key, value = line.split(":", 1)
-            entries[key.strip()] = value.strip().strip("'\\"")
+            entries[key.strip()] = value.strip().strip(chr(39) + chr(34))
     main = "org.geysermc.floodgate.SpigotPlugin"
     if main.replace(".", "/") + ".class" not in set(archive.namelist()):
         raise SystemExit("Floodgate-Spigot main class missing")
