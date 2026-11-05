@@ -181,11 +181,19 @@ jobs:
       - name: Validate E2E Compose configuration
         run: docker compose -f compose.e2e.yaml config --quiet
 
+      - name: Verify E2E loopback configuration and negative cases
+        run: |
+          python3 tools/security/verify_e2e_loopback.py --self-test
+          python3 tools/security/verify_e2e_loopback.py
+
       - name: Start isolated Paper E2E stack
         run: docker compose -f compose.e2e.yaml up -d --wait --wait-timeout 300
 
       - name: Start pinned ViaProxy 26.3 translation bridge
         run: bash tools/e2e/start-viaproxy.sh
+
+      - name: Verify running ViaProxy E2E listener is loopback-only
+        run: python3 tools/security/verify_e2e_loopback.py --runtime
 
       - name: Run Stone Warden real-client combat E2E
         run: node tools/e2e/stone-warden.cjs
