@@ -47,7 +47,7 @@ services:
         auraskills:2.4.0
       MODRINTH_DOWNLOAD_DEPENDENCIES: "required"
     ports:
-      - "25567:25565/tcp"
+      - "127.0.0.1:25567:25565/tcp"
     volumes:
       - paper-e2e-data:/data
       - ./build/libs:/plugins:ro
