@@ -18,7 +18,7 @@ Neither the E2E Paper backend nor ViaProxy needs to accept a remote public conne
 1. `compose.e2e.yaml` changes **only** the test Paper port from `25567:25565/tcp` (all interfaces by default) to `127.0.0.1:25567:25565/tcp`. PostgreSQL remains unexposed.
 2. `tools/e2e/start-viaproxy.sh` adds the upstream-supported `--bind-address 127.0.0.1:25568` CLI argument, retaining `--target-address 127.0.0.1:25567` and pinned `--target-version 26.3`.
 3. `tools/security/verify_e2e_loopback.py` provides standard-library-only static and live listener checks. No credentials or Compose JSON are printed.
-4. `.github/workflows/ci.yml` includes the static validator + **15 deterministic unit/negative mutation tests** before starting E2E containers; immediately after ViaProxy startup it verifies the actual Linux TCP listener is **exactly one** `127.0.0.1:25568` IPv4 socket, with **no** IPv6 listener on that port. Existing gameplay E2Es remain unchanged.
+4. `.github/workflows/ci.yml` includes the static validator + **18 deterministic unit/negative mutation tests** before starting E2E containers; immediately after ViaProxy startup it verifies the actual Linux TCP listener is **exactly one** loopback-only TCP socket on port 25568: either IPv4 `127.0.0.1` or the equivalent Java/Netty IPv4-mapped IPv6 address `::ffff:127.0.0.1`. IPv6 wildcard `::`, IPv4 wildcard `0.0.0.0`, unrelated IPv6 endpoints and duplicate listeners are rejected. Existing gameplay E2Es remain unchanged.
 
 The static model rejects wildcard Paper host interfaces, additional/incorrect port mappings, PostgreSQL publication, unknown Compose services, host-network/privileged services, wrong Paper offline mode, wrong ViaProxy target or wildcard bind. Runtime reads `/proc/net/tcp` and `/proc/net/tcp6` without dumping addresses or process environment; missing or wildcard ViaProxy listeners fail closed.
 
@@ -35,6 +35,11 @@ python3 tools/security/verify_e2e_loopback.py --runtime
 ```
 
 The launch script uses `RUNNER_TEMP` for the synthetic translation bridge and `tools/e2e/stone-warden*.cjs`, `stone-vault*.cjs` continue targeting loopback.
+
+
+### Runtime finding and fix
+
+The first head CI run #229 (commit `6cd4b797e15ee30c31ad0d9f5780bc4ce7fbe237`) proved that ViaProxy starts successfully but the original runtime guard erroneously rejected an IPv4-mapped IPv6 listener. Pinned ViaProxy logs reported `127.0.0.1:25568`, while Linux listed the Java/Netty listener in `/proc/net/tcp6`, not `/proc/net/tcp`. The revised guard recognizes the exact little-endian `/proc/net/tcp6` encoding of `::ffff:127.0.0.1`; it **does not** accept `::` or other IPv6 interfaces. A matching new positive regression test and further negative cases ensure we do not loosen the security boundary to accommodate the runtime behavior. The corrected head requires a fresh complete CI result before merge.
 
 ## Non-goals and remaining risks
 
