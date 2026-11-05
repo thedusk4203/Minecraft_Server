@@ -22,6 +22,10 @@ PAPER_TARGET_PORT = 25565
 PAPER_HOST_PORT = 25567
 VIA_HOST_PORT = 25568
 LOOPBACK_V4_HEX = "0100007F"  # /proc/net/tcp encodes 127.0.0.1 little-endian.
+# Java/Netty may use an AF_INET6 socket with an IPv4-mapped loopback
+# address. Linux /proc/net/tcp6 represents its 32-bit words little-endian:
+# ::ffff:127.0.0.1 => 0000000000000000 FFFF0000 0100007F.
+MAPPED_LOOPBACK_V6_HEX = "0000000000000000FFFF00000100007F"
 
 
 def check_static(model: dict[str, Any], launcher: str) -> list[str]:
@@ -91,13 +95,13 @@ def tcp_listeners(table: str, port: int) -> list[str]:
 def check_runtime(tcp4: str, tcp6: str) -> list[str]:
     ipv4 = tcp_listeners(tcp4, VIA_HOST_PORT)
     ipv6 = tcp_listeners(tcp6, VIA_HOST_PORT)
-    problems = []
-    if ipv4 != [LOOPBACK_V4_HEX]:
-        problems.append("E2E_VIAPROXY_NOT_EXACTLY_ONE_IPV4_LOOPBACK_LISTENER")
-    # Require an explicit review before introducing any IPv6 listener.
-    if ipv6:
-        problems.append("E2E_UNREVIEWED_IPV6_VIAPROXY_LISTENER")
-    return problems
+    # Require exactly ONE bound listener. AF_INET6 with an IPv4-mapped
+    # 127.0.0.1 address is equivalent to a loopback-only IPv4 listener;
+    # it is NOT a wildcard IPv6 bind and must not be confused with ::.
+    if (ipv4 == [LOOPBACK_V4_HEX] and not ipv6) or (
+            not ipv4 and ipv6 == [MAPPED_LOOPBACK_V6_HEX]):
+        return []
+    return ["E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER"]
 
 
 def _fixture() -> tuple[dict[str, Any], str]:
@@ -187,24 +191,35 @@ class E2ELoopbackTests(unittest.TestCase):
                          "--target-address 0.0.0.0:25567")
         ), "E2E_VIAPROXY_TARGET_CHANGED")
 
-    def test_valid_runtime_listener(self) -> None:
+    def test_valid_ipv4_runtime_listener(self) -> None:
         self.assertEqual(check_runtime(_table(LOOPBACK_V4_HEX), _table("0" * 32, state="01")), [])
 
-    def test_runtime_wildcard_rejected(self) -> None:
-        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_IPV4_LOOPBACK_LISTENER",
+    def test_valid_ipv4_mapped_ipv6_runtime_listener(self) -> None:
+        self.assertEqual(check_runtime("", _table(MAPPED_LOOPBACK_V6_HEX)), [])
+
+    def test_runtime_wildcard_ipv4_rejected(self) -> None:
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
                       check_runtime(_table("00000000"), ""))
 
-    def test_runtime_ipv6_listener_rejected(self) -> None:
-        self.assertIn("E2E_UNREVIEWED_IPV6_VIAPROXY_LISTENER",
-                      check_runtime(_table(LOOPBACK_V4_HEX), _table("0" * 32)))
+    def test_runtime_wildcard_ipv6_rejected(self) -> None:
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
+                      check_runtime("", _table("0" * 32)))
+
+    def test_runtime_unmapped_ipv6_loopback_rejected(self) -> None:
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
+                      check_runtime("", _table("00000000000000000000000001000000")))
 
     def test_runtime_no_listener_rejected(self) -> None:
-        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_IPV4_LOOPBACK_LISTENER",
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
                       check_runtime("", ""))
 
     def test_runtime_duplicate_listener_rejected(self) -> None:
-        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_IPV4_LOOPBACK_LISTENER",
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
                       check_runtime(_table(LOOPBACK_V4_HEX) * 2, ""))
+
+    def test_runtime_ipv4_and_mapped_ipv6_double_bind_rejected(self) -> None:
+        self.assertIn("E2E_VIAPROXY_NOT_EXACTLY_ONE_LOOPBACK_LISTENER",
+                      check_runtime(_table(LOOPBACK_V4_HEX), _table(MAPPED_LOOPBACK_V6_HEX)))
 
 
 def inspect_static() -> int:
