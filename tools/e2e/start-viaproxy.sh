@@ -28,6 +28,7 @@ fi
 echo "${EXPECTED_SHA256}  ${JAR_PATH}" | sha256sum --check --strict
 
 "${JAVA_BIN}" -jar "${JAR_PATH}" cli \
+  --bind-address 127.0.0.1:25568 \
   --target-address 127.0.0.1:25567 \
   --target-version 26.3 \
   >"${LOG_PATH}" 2>&1 &
