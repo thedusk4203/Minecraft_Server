@@ -22,7 +22,7 @@ The analyzer rejects:
 1. publicly published Paper backend ports;
 2. publicly published PostgreSQL ports;
 3. `host` or any unexpected `network_mode` on these services, and privileged containers;
-4. missing/unexpected proxy public port mapping (Java 25565/TCP, Bedrock 19132/TCP and UDP);
+4. missing/unexpected, remapped or duplicate proxy public port mapping (Java 25565/TCP, Bedrock 19132/TCP and UDP);
 5. backend Paper not set to offline mode (which must be coupled to a trusted proxy);
 6. missing or inconsistent Compose-provisioned Paper and Velocity forwarding secrets;
 7. Velocity `online-mode` disabled, `force-key-authentication` disabled, or non-`modern` forwarding;
